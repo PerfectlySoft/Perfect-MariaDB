@@ -129,16 +129,19 @@ sudo apt-get install libmariadb-client-lgpl-dev
 
 Please also make sure the pkg-config file /usr/lib/pkgconfig/mariadb.pc specified for MariaDB should be MANUALLY added and corrected before building, possiblely looks like this:
 
-```
-libdir=/usr/lib/x86_64-linux-gnu
-includedir=/usr/include/mariadb
+```bash
+prefix=/usr/local
+exec_prefix=${prefix}/bin
+libdir=${prefix}/lib/mariadb
+includedir=${prefix}/include/mariadb
 
 Name: mariadb
 Description: MariaDB Connector/C
-Version: 5.5.0
+Version: 5.5.1
 Requires:
-Libs: -L/usr/lib/x86_64-linux-gnu -lmariadb
-Cflags: -I/usr/include/mariadb -g -O2 -fstack-protector-strong -Wformat -Werror=format-security -D_FORTIFY_SOURCE=2  -Wunused -Wno-uninitialize
+Libs: -L${libdir} -lmariadb  -ldl -lm -lpthread
+Cflags: -I${includedir}
+Libs_r: -L${libdir} -lmariadb -ldl -lm -lpthread
 ```
 
 ## Building

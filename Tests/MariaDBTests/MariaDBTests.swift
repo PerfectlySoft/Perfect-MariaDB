@@ -1,9 +1,9 @@
 //
-//  MySQLTests.swift
-//  MySQLTests
+//  MariaDBTests.swift
+//  MariaDBTests
 //
 //  Created by Kyle Jessup on 2015-10-20.
-//  Modified by Rockford Wei on 2016-10-04 for MariaDB
+//  Modified by Rockford Wei on 2016-10-25 for MariaDB
 //  Copyright © 2015 PerfectlySoft. All rights reserved.
 //
 //===----------------------------------------------------------------------===//
@@ -22,7 +22,7 @@
 import XCTest
 @testable import MariaDB
 
-let testHost = "10.10.1.123"
+let testHost = "127.0.0.1"
 let testUser = "root"
 // PLEASE change to whatever your actual password is before running these tests
 let testPassword = "123"//testpassword"

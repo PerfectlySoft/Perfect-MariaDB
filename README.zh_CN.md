@@ -82,14 +82,18 @@ swift package generate-xcodeproj
 如果不用Xcode，那么您必须手工处理pkg-config的.pc文件，比如/usr/local/lib/pkgconfig/mariadb.pc，内容类似如下：
 
 ```
+prefix=/usr/local
+exec_prefix=${prefix}/bin
+libdir=${prefix}/lib/mariadb
+includedir=${prefix}/include/mariadb
+
 Name: mariadb
 Description: MariaDB Connector/C
 Version: 5.5.1
 Requires:
-Libs: -L/usr/local/Cellar/mariadb-connector-c/2.2.2/lib/mariadb -lmariadb  -ldl -lm -lpthread
-Cflags: -I/usr/local/Cellar/mariadb-connector-c/2.2.2/include/mariadb -I/usr/local/Cellar/mariadb-connector-c/2.2.2/include/mariadb/mysqlLibs_r: -L/usr/local/Cellar/mariadb-connector-c/2.2.2/lib/mariadb -lmariadb -ldl -lm -lpthread
-Plugindir: /usr/local/Cellar/mariadb-connector-c/2.2.2/mariadb/lib/plugin
-Include: -I/usr/local/Cellar/mariadb-connector-c/2.2.2/include/mariadb -I/usr/local/Cellar/mariadb-connector-c/2.2.2/include/mariadb/mysql
+Libs: -L${libdir} -lmariadb  -ldl -lm -lpthread
+Cflags: -I${includedir}
+Libs_r: -L${libdir} -lmariadb -ldl -lm -lpthread
 ```
 
 请 **手工** 处理好上述文件中的各个路径。如果不知道具体的编译选项，可以尝试使用终端命令行：mariadb_config 检查mariadb的客户端配置：
