@@ -59,29 +59,25 @@
 
 ## OS X 编译时的注意事项
 
-本软件组件需要[Home Brew](http://brew.sh)管理的 MariaDB 二进制版本。
+本软件组件需要[Home Brew](http://brew.sh)管理的 MariaDB 连接库函数二进制版本。
 
 在 macOS X 下安装 Home Brew 的方法：
 
-```
+
+```bash
 /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
 ```
 
-完成后可以安装 MariaDB：
 
-```
-brew install mariadb
-```
+完成后可以安装 MariaDB 连接器：
 
-编译时比较稳妥的方法时用Xcode进行整体编译。在完成git 下载后，可以使用SPM命令生成Xcode工程：
-
-```
-swift package generate-xcodeproj
+```bash
+ brew install mariadb-connector-c
 ```
 
-如果不用Xcode，那么您必须手工处理pkg-config的.pc文件，比如/usr/local/lib/pkgconfig/mariadb.pc，内容类似如下：
+您必须手工处理pkg-config的.pc文件，比如/usr/local/lib/pkgconfig/mariadb.pc，内容类似如下：
 
-```
+```bash
 prefix=/usr/local
 exec_prefix=${prefix}/bin
 libdir=${prefix}/lib/mariadb
@@ -96,11 +92,6 @@ Cflags: -I${includedir}
 Libs_r: -L${libdir} -lmariadb -ldl -lm -lpthread
 ```
 
-请 **手工** 处理好上述文件中的各个路径。如果不知道具体的编译选项，可以尝试使用终端命令行：mariadb_config 检查mariadb的客户端配置：
-
-```
-mariadb_config
-```
 
 为了pkg-config正常工作，最好编辑一下当前用户根目录的 ~/.bash_profile 文件，在最后一行增加以下内容：
 
@@ -134,16 +125,19 @@ sudo apt-get install libmariadb-client-lgpl-dev
 
 与在MacOS下编译前的准备工作一致，Linux一样需要手工编辑pkg-config文件，比如 /usr/lib/pkgconfig/mariadb.pc 。请务必确保其内容正确无误，以下内容为该文件的一个模板：
 
-```
-libdir=/usr/lib/x86_64-linux-gnu
-includedir=/usr/include/mariadb
+```bash
+prefix=/usr
+exec_prefix=${prefix}/bin
+libdir=${prefix}/lib/mariadb
+includedir=${prefix}/include/mariadb
 
 Name: mariadb
 Description: MariaDB Connector/C
 Version: 5.5.0
 Requires:
-Libs: -L/usr/lib/x86_64-linux-gnu -lmariadb
-Cflags: -I/usr/include/mariadb -g -O2 -fstack-protector-strong -Wformat -Werror=format-security -D_FORTIFY_SOURCE=2  -Wunused -Wno-uninitialize
+Libs: -L${libdir} -lmariadb  -ldl -lm -lpthread
+Cflags: -I${includedir}
+Libs_r: -L${libdir} -lmariadb -ldl -lm -lpthread
 ```
 
 ## 编译

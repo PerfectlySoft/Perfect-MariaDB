@@ -58,43 +58,35 @@ A comprehensive list of open issues can be found at [http://jira.perfect.org:808
 
 ## OS X Build Notes
 
-This package requires the [Home Brew](http://brew.sh) build of MariaDB.
+This package requires the [Home Brew](http://brew.sh) build of MariaDB connector.
 
-To install Home Brew:
+### To install Home Brew:
 
-```
+```bash
 /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
 ```
 
-To install MariaDB:
+### To install MariaDB connector:
 
-```
-brew install mariadb
-```
-
-The practice of using Xcode to build and test is strongly recommended. Once git cloned, please use Swift Package Manager to generate a project for Xcode:
-
-```
-swift package generate-xcodeproj
+```bash
+ brew install mariadb-connector-c
 ```
 
-Otherwise you will have to deal with pkg-config file, such as: /usr/local/lib/pkgconfig/mariadb.pc, similar with below:
+You will have to deal with pkg-config file, such as: /usr/local/lib/pkgconfig/mariadb.pc, similar with below:
 
-```
+```bash
+prefix=/usr/local
+exec_prefix=${prefix}/bin
+libdir=${prefix}/lib/mariadb
+includedir=${prefix}/include/mariadb
+
 Name: mariadb
 Description: MariaDB Connector/C
 Version: 5.5.1
 Requires:
-Libs: -L/usr/local/Cellar/mariadb-connector-c/2.2.2/lib/mariadb -lmariadb  -ldl -lm -lpthread
-Cflags: -I/usr/local/Cellar/mariadb-connector-c/2.2.2/include/mariadb -I/usr/local/Cellar/mariadb-connector-c/2.2.2/include/mariadb/mysqlLibs_r: -L/usr/local/Cellar/mariadb-connector-c/2.2.2/lib/mariadb -lmariadb -ldl -lm -lpthread
-Plugindir: /usr/local/Cellar/mariadb-connector-c/2.2.2/mariadb/lib/plugin
-Include: -I/usr/local/Cellar/mariadb-connector-c/2.2.2/include/mariadb -I/usr/local/Cellar/mariadb-connector-c/2.2.2/include/mariadb/mysql
-```
-
-Please MANUALLY correct the above path to fit your system. To do this, run mariadb_config is a good approach:
-
-```
-mariadb_config
+Libs: -L${libdir} -lmariadb  -ldl -lm -lpthread
+Cflags: -I${includedir}
+Libs_r: -L${libdir} -lmariadb -ldl -lm -lpthread
 ```
 
 Then please also edit your ~/.bash_profile with the following line:
@@ -121,23 +113,20 @@ man pkg-config
 Tests performed on Ubuntu 16.04. Prior to build this library, please ensure:
 
 ```
-sudo apt-get install clang
-sudo apt-get install pkg-config
-sudo apt-get install libmariadb2
-sudo apt-get install libmariadb-client-lgpl-dev
+sudo apt-get install clang pkg-config libmariadb2 libmariadb-client-lgpl-dev  libcurl4-openssl-dev
 ```
 
-Please also make sure the pkg-config file /usr/lib/pkgconfig/mariadb.pc specified for MariaDB should be MANUALLY added and corrected before building, possiblely looks like this:
+Please also make sure the pkg-config file /usr/lib/pkgconfig/mariadb.pc specified for MariaDB should be MANUALLY added and corrected before building, possibly looks like this:
 
 ```bash
-prefix=/usr/local
+prefix=/usr
 exec_prefix=${prefix}/bin
 libdir=${prefix}/lib/mariadb
 includedir=${prefix}/include/mariadb
 
 Name: mariadb
 Description: MariaDB Connector/C
-Version: 5.5.1
+Version: 5.5.0
 Requires:
 Libs: -L${libdir} -lmariadb  -ldl -lm -lpthread
 Cflags: -I${includedir}
