@@ -28,7 +28,7 @@ let testUser = "root"
 let testPassword = "123"//testpassword"
 let testSchema = "test"
 
-class MySQLTests: XCTestCase {
+class MariaDBTests: XCTestCase {
     var mysql: MySQL!
 
     override func setUp() {
@@ -682,8 +682,8 @@ class MySQLTests: XCTestCase {
     }
 }
 
-extension MySQLTests {
-    static var allTests : [(String, (MySQLTests) -> () throws -> ())] {
+extension MariaDBTests {
+    static var allTests : [(String, (MariaDBTests) -> () throws -> ())] {
         return [
                    ("testConnect", testConnect),
                    ("testListDbs1", testListDbs1),
