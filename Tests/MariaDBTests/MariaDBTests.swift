@@ -106,6 +106,7 @@ class MariaDBTests: XCTestCase {
 		XCTAssert(list.count > 0)
 	}
 
+
 	func testListTables2() {
 		let sres = mysql.selectDatabase(named: "information_schema")
 
@@ -446,6 +447,30 @@ class MariaDBTests: XCTestCase {
         }
     }
 
+    func testProcedure() {
+      XCTAssert(mysql.query(statement: "DROP PROCEDURE IF EXISTS procTest"))
+      var qres = mysql.query(statement: "CREATE PROCEDURE procTest (IN x INT) BEGIN SELECT * FROM int_test WHERE a = x; END")
+  		XCTAssert(qres == true, mysql.errorMessage())
+      qres =  mysql.query(statement: "CALL procTest(-128)")
+      XCTAssert(qres == true, mysql.errorMessage())
+      let results = mysql.storeResults()
+      if let results = results {
+          defer { results.close() }
+          while let row = results.next() {
+              XCTAssertEqual(row[0], "-128")
+              XCTAssertEqual(row[1], "0")
+              XCTAssertEqual(row[2], "-32768")
+              XCTAssertEqual(row[3], "0")
+              XCTAssertEqual(row[4], "-8388608")
+              XCTAssertEqual(row[5], "0")
+              XCTAssertEqual(row[6], "-2147483648")
+              XCTAssertEqual(row[7], "0")
+              XCTAssertEqual(row[8], "-9223372036854775808")
+              XCTAssertEqual(row[9], "0")
+          }
+      }
+    }
+
     func testQueryIntMax() {
         XCTAssert(mysql.query(statement: "DROP TABLE IF EXISTS int_test"), mysql.errorMessage())
         XCTAssert(mysql.query(statement: "CREATE TABLE int_test (a TINYINT, au TINYINT UNSIGNED, b SMALLINT, bu SMALLINT UNSIGNED, c MEDIUMINT, cu MEDIUMINT UNSIGNED, d INT, du INT UNSIGNED, e BIGINT, eu BIGINT UNSIGNED)"), mysql.errorMessage())
@@ -698,6 +723,7 @@ extension MariaDBTests {
                    ("testServerVersion", testServerVersion),
                    ("testQueryInt", testQueryInt),
                    ("testQueryIntMin", testQueryIntMin),
+                   ("testProcedure", testProcedure),
                    ("testQueryIntMax", testQueryIntMax),
                    ("testQueryDecimal", testQueryDecimal),
                    ("testStmtInt", testStmtInt),
