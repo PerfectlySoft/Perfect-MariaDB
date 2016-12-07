@@ -24,7 +24,7 @@ let package = Package(
     name: "MariaDB",
     targets: [],
     dependencies: [
-                      .Package(url: "https://github.com/PerfectlySoft/Perfect-mariadbclient", majorVersion: 2, minor: 0)
+                      .Package(url: "https://github.com/PerfectlySoft/Perfect-mariadbclient.git", majorVersion: 2, minor: 0)
     ],
     exclude: []
 )
@@ -33,7 +33,7 @@ let package = Package(
     name: "MariaDB",
     targets: [],
     dependencies: [
-                      .Package(url: "https://github.com/PerfectlySoft/Perfect-mariadbclient-Linux", majorVersion: 2, minor: 0)
+                      .Package(url: "https://github.com/PerfectlySoft/Perfect-mariadbclient-Linux.git", majorVersion: 2, minor: 0)
     ],
     exclude: []
 )
