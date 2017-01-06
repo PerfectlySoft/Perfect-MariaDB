@@ -1,0 +1,1 @@
+RUN apt-get -y update && apt-get install -y pkg-config libmariadb2 libmariadb-client-lgpl-dev && printf "Name: mariadb\nDescription: MariaDB Connector/C\nVersion: 5.5.0\nLibs: -L/usr/lib/mariadb -lmariadb  -ldl -lm -lpthread\nCflags: -I/usr/include/mariadb" > /usr/lib/pkgconfig/mariadb.pc
