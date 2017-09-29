@@ -745,9 +745,9 @@ public final class MySQLStmt {
 					assertionFailure("Unhandled MySQL type \(bind.buffer_type)")
 				}
 
-				if bind.length != nil {
-					bind.length.deallocate(capacity: 1)
-				}
+        if let len = bind.length {
+          len.deallocate(capacity: 1)
+        }
 			}
 			paramBinds.deinitialize(count: count)
 			paramBinds.deallocate(capacity: count)
