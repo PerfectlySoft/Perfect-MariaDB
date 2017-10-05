@@ -327,9 +327,14 @@ public final class MySQL {
 	}
 
     /// Executes an SQL query using the specified string
-	public func query(statement stmt: String) -> Bool {
-		let r = mysql_real_query(self.ptr!, stmt, UInt(stmt.utf8.count))
-		return r == 0
+	public func query(statement stmt: String, multiple: Bool = false) -> Bool {
+		if multiple {
+			let r = mysql_query(self.ptr!, stmt)
+			return r == 0
+		} else {
+			let r = mysql_real_query(self.ptr!, stmt, UInt(stmt.utf8.count))
+			return r == 0
+		}
 	}
 
     /// Retrieves a complete result set to the client
