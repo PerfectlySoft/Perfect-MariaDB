@@ -23,7 +23,7 @@
 
 <p align="center">
     <a href="https://developer.apple.com/swift/" target="_blank">
-        <img src="https://img.shields.io/badge/Swift-4.0-orange.svg?style=flat" alt="Swift 4.0">
+        <img src="https://img.shields.io/badge/Swift-5.0-orange.svg?style=flat" alt="Swift 5.0">
     </a>
     <a href="https://developer.apple.com/swift/" target="_blank">
         <img src="https://img.shields.io/badge/Platforms-OS%20X%20%7C%20Linux%20-lightgray.svg?style=flat" alt="Platforms OS X | Linux">
@@ -45,7 +45,7 @@ This project provides a Swift wrapper around the MariaDB client library, enablin
 
 This package builds with Swift Package Manager and is part of the [Perfect](https://github.com/PerfectlySoft/Perfect) project. It was written to be stand-alone and so does not require PerfectLib or any other components.
 
-Ensure you have installed and activated the latest Swift 4.0 tool chain.
+Ensure you have installed and activated the latest Swift tool chain.
 
 
 ## OS X Build Notes
@@ -124,63 +124,19 @@ $ pkg-config mariadb --cflags --libs
 Add this project as a dependency in your Package.swift file.
 
 ```
-.Package(url:"https://github.com/PerfectlySoft/Perfect-MariaDB.git", 
-majorVersion: 3)
+.package(url:"https://github.com/PerfectlySoft/Perfect-MariaDB.git", from: "4.0.0")
+...
+dependencies: ["MariaDB"]),
 ```
+
 
 Import required libraries:
 ```
 import MariaDB
+import PerfectCRUD
 ```
 
-Setup the credentials for your connection:
-
-```
-let testHost = "127.0.0.1"
-let testUser = "test"
-
-// PLEASE change to whatever your actual password is before running these tests
-let testPassword = "password"
-let testSchema = "schema"
-```
-
-Create an instance of the MySQL class
-
-```
-	let dataMysql = MySQL()
-
-    // need to make sure something is available.
-    guard dataMysql.connect(host: testHost, user: testUser, password: testPassword ) else {
-    // something wrong here
-        return
-    }
-
-    defer {
-        dataMysql.close()  // defer ensures we close our db connection at the end of this request
-    }
-
-    //set database to be used, this example assumes presence of a users table and run a raw query, return failure message on a error
-    guard dataMysql.selectDatabase(named: testSchema) && dataMysql.query(statement: "select * from users limit 1") else {
-    // something wrong here
-        return
-    }
-
-    //store complete result set
-    let results = dataMysql.storeResults()
-
-    //setup an array to store results
-    var resultArray = [[String?]]()
-
-    while let row = results?.next() {
-        resultArray.append(row)
-
-    }
-
-	print(resultArray)
-```
-
-Additionally, there are more complex Statement constructors, and potential object designs which can further abstract the process of interacting with your data.
-
+Perfect-MariaDB supports the Perfect-CRUD protocol. Please check [Perfect-CRUD](https://github.com/PerfectlySoft/Perfect-CRUD.git) for more information.
 
 ## Further Information
 For more information on the Perfect project, please visit [perfect.org](http://perfect.org).

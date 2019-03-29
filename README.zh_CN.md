@@ -23,7 +23,7 @@
 
 <p align="center">
     <a href="https://developer.apple.com/swift/" target="_blank">
-        <img src="https://img.shields.io/badge/Swift-4.0-orange.svg?style=flat" alt="Swift 4.0">
+        <img src="https://img.shields.io/badge/Swift-5.0-orange.svg?style=flat" alt="Swift 5.0">
     </a>
     <a href="https://developer.apple.com/swift/" target="_blank">
         <img src="https://img.shields.io/badge/Platforms-OS%20X%20%7C%20Linux%20-lightgray.svg?style=flat" alt="Platforms OS X | Linux">
@@ -47,7 +47,7 @@
 
 该软件使用SPM进行编译和测试，本软件也是[Perfect](https://github.com/PerfectlySoft/Perfect)项目的一部分。本软件包可独立使用，因此使用时可以脱离PerfectLib等其他组件。
 
-请确保您已经安装并激活了最新版本的 Swift 4.0 tool chain 工具链。
+请确保您已经安装并激活了最新版本的 Swift tool chain 工具链。
 
 ## OS X 编译时的注意事项
 
@@ -125,7 +125,9 @@ $ pkg-config mariadb --cflags --libs
 请在您的Package.swift文件下增加以下内容：
 
 ```
-.Package(url:"https://github.com/PerfectlySoft/Perfect-MariaDB.git", majorVersion: 2)
+.package(url:"https://github.com/PerfectlySoft/Perfect-MariaDB.git", from: "4.0.0")
+...
+dependencies: ["MariaDB"]),
 ```
 
 ## 快速上手
@@ -135,63 +137,7 @@ $ pkg-config mariadb --cflags --libs
 import MariaDB
 ```
 
-设置数据库连接信息
-```
-let testHost = "127.0.0.1"
-let testUser = "test"
-// 请按照数据库服务器实际配置自行填写有关的信息
-let testPassword = "password"
-let testSchema = "schema"
-```
-
-创建MySQL实例（MariaDB是在MySQL基础上的新的品牌，所以函数内容还是MySQL）
-
-```
-	let dataMysql = MySQL()
-
-    // need to make sure something is available.
-    guard dataMysql.connect(host: testHost, user: testUser, password: testPassword ) else {
-        // 出错了
-        return
-    }
-
-    defer {
-        dataMysql.close()  // 确保数据库在使用完毕后正常关闭
-    }
-
-    // 设置具体的数据库，假设数据库中有一个user表，尝试访问一下，如果无法访问就报错
-    guard dataMysql.selectDatabase(named: testSchema) && dataMysql.query(statement: "select * from users limit 1") else {
-        // 出错了
-
-        return
-    }
-
-    // 将查询结果保存下来
-    let results = dataMysql.storeResults()
-
-    // 用一个数组来检查实际查询的信息
-    var resultArray = [[String?]]()
-
-    while let row = results?.next() {
-        resultArray.append(row)
-
-    }
-
-	print(resultArray)
-
-```
-
-
-此外，更复杂的查询语句都可以按照您的意愿自行完成。
-
-### 问题报告、内容贡献和客户支持
-
-我们目前正在过渡到使用JIRA来处理所有源代码资源合并申请、修复漏洞以及其它有关问题。因此，GitHub 的“issues”问题报告功能已经被禁用了。
-
-如果您发现了问题，或者希望为改进本文提供意见和建议，[请在这里指出](http://jira.perfect.org:8080/servicedesk/customer/portal/1).
-
-在您开始之前，请参阅[目前待解决的问题清单](http://jira.perfect.org:8080/projects/ISS/issues).
-
+Perfect-MariaDB 支持 Perfect-CRUD。详见[Perfect-CRUD操作手册](https://github.com/PerfectlySoft/Perfect-CRUD.git)
 
 ## 更多信息
 关于本项目更多内容，请参考[perfect.org](http://perfect.org).

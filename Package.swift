@@ -28,6 +28,7 @@ let package = Package(
             targets: ["MariaDB"]),
     ],
     dependencies: [
+        .package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", from: "1.2.2")
     ],
     targets: [
         .systemLibrary(name: "mariadbclient",
@@ -39,7 +40,7 @@ let package = Package(
         ),
         .target(
             name: "MariaDB",
-            dependencies: ["mariadbclient"]),
+            dependencies: ["mariadbclient", "PerfectCRUD"]),
         .testTarget(
             name: "MariaDBTests",
             dependencies: ["MariaDB"]),
