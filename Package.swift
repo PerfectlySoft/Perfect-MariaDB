@@ -1,3 +1,4 @@
+// swift-tools-version:4.2
 //
 //  Package.swift
 //  Perfect-MariaDB
@@ -19,22 +20,29 @@
 
 import PackageDescription
 
-#if os(OSX)
 let package = Package(
     name: "MariaDB",
-    targets: [],
-    dependencies: [
-                      .Package(url: "https://github.com/PerfectlySoft/Perfect-mariadbclient.git", majorVersion: 2)
+    products: [
+        .library(
+            name: "MariaDB",
+            targets: ["MariaDB"]),
     ],
-    exclude: []
-)
-#else
-let package = Package(
-    name: "MariaDB",
-    targets: [],
     dependencies: [
-                      .Package(url: "https://github.com/PerfectlySoft/Perfect-mariadbclient-Linux.git", majorVersion: 2)
+        .package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", from: "1.2.2")
     ],
-    exclude: []
+    targets: [
+        .systemLibrary(name: "mariadbclient",
+            pkgConfig: "mariadb",
+            providers: [
+                .apt(["libmariadb-client-lgpl-dev"]),
+                .brew(["mariadb-connector-c"])
+            ]
+        ),
+        .target(
+            name: "MariaDB",
+            dependencies: ["mariadbclient", "PerfectCRUD"]),
+        .testTarget(
+            name: "MariaDBTests",
+            dependencies: ["MariaDB"]),
+    ]
 )
-#endif

@@ -1,0 +1,16 @@
+version: '3.1'
+
+services:
+  db:
+    image: mariadb
+    restart: always
+    ports: 
+      - 3306:3306
+    networks:
+      - maria-net
+    environment:
+      MYSQL_ROOT_PASSWORD: 123
+      MYSQL_DATABASE: test
+networks:
+  maria-net:
+    driver: bridge
