@@ -19,12 +19,10 @@
 //
 
 #if os(Linux)
-	import SwiftGlibc
-#else
-	import Darwin
+	import Glibc
 #endif
 import mariadbclient
-
+import Foundation
 /// This class permits an UnsafeMutablePointer to be used as a IteratorProtocol
 struct GenerateFromPointer<T> : IteratorProtocol {
 
@@ -227,7 +225,7 @@ public final class MySQL {
 	func cleanConvertedString(_ pair: (UnsafeMutablePointer<Int8>?, Int)) {
 		if let p0 = pair.0 , pair.1 > 0 {
 			p0.deinitialize(count: pair.1)
-			p0.deallocate(capacity: pair.1)
+			p0.deallocate()
 		}
 	}
 
@@ -742,29 +740,30 @@ public final class MySQLStmt {
 
 				switch bind.buffer_type.rawValue {
 				case MYSQL_TYPE_DOUBLE.rawValue:
-					bind.buffer.assumingMemoryBound(to: Double.self).deallocate(capacity: 1)
+					bind.buffer.assumingMemoryBound(to: Double.self).deallocate()
+
 				case MYSQL_TYPE_LONGLONG.rawValue:
 					if bind.is_unsigned == 1 {
-						bind.buffer.assumingMemoryBound(to: UInt64.self).deallocate(capacity: 1)
+						bind.buffer.assumingMemoryBound(to: UInt64.self).deallocate()
 					} else {
-						bind.buffer.assumingMemoryBound(to: Int64.self).deallocate(capacity: 1)
+						bind.buffer.assumingMemoryBound(to: Int64.self).deallocate()
 					}
 				case MYSQL_TYPE_VAR_STRING.rawValue,
 					MYSQL_TYPE_DATE.rawValue,
 					MYSQL_TYPE_DATETIME.rawValue:
-					bind.buffer.assumingMemoryBound(to: Int8.self).deallocate(capacity: Int(bind.buffer_length))
+					bind.buffer.assumingMemoryBound(to: Int8.self).deallocate()
 				case MYSQL_TYPE_LONG_BLOB.rawValue:
 					()
 				default:
 					assertionFailure("Unhandled MySQL type \(bind.buffer_type)")
 				}
 
-        if let len = bind.length {
-          len.deallocate(capacity: 1)
-        }
+				if let len = bind.length {
+					len.deallocate()
+				}
 			}
 			paramBinds.deinitialize(count: count)
-			paramBinds.deallocate(capacity: count)
+			paramBinds.deallocate()
 			self.paramBinds = nil
 			self.paramBindsOffset = 0
 		}
@@ -1010,12 +1009,10 @@ public final class MySQLStmt {
 		public func close() {
 			if let meta = self.meta {
 				mysql_free_result(meta)
+				binds.deallocate()
 
-				binds.deallocate(capacity: numFields)
-
-				lengthBuffers.deallocate(capacity: numFields)
-				isNullBuffers.deallocate(capacity: numFields)
-
+				lengthBuffers.deallocate()
+				isNullBuffers.deallocate()
 				self.meta = nil
 			}
 		}
@@ -1157,34 +1154,34 @@ public final class MySQLStmt {
 					case .Double:
                         switch bind.buffer_type {
                         case MYSQL_TYPE_FLOAT:
-                            bind.buffer.assumingMemoryBound(to: Float.self).deallocate(capacity: 1)
+							bind.buffer.assumingMemoryBound(to: Float.self).deallocate()
                         case MYSQL_TYPE_DOUBLE:
-                            bind.buffer.assumingMemoryBound(to: Double.self).deallocate(capacity: 1)
+                            	bind.buffer.assumingMemoryBound(to: Double.self).deallocate()
                         default: break
                         }
 					case .Integer:
                         if bind.is_unsigned == 1 {
                             switch bind.buffer_type {
                             case MYSQL_TYPE_LONGLONG:
-                                bind.buffer.assumingMemoryBound(to: CUnsignedLongLong.self).deallocate(capacity: 1)
+                                bind.buffer.assumingMemoryBound(to: CUnsignedLongLong.self).deallocate()
                             case MYSQL_TYPE_LONG, MYSQL_TYPE_INT24:
-                                bind.buffer.assumingMemoryBound(to: CUnsignedInt.self).deallocate(capacity: 1)
+                                bind.buffer.assumingMemoryBound(to: CUnsignedInt.self).deallocate()
                             case MYSQL_TYPE_SHORT:
-                                bind.buffer.assumingMemoryBound(to: CUnsignedShort.self).deallocate(capacity: 1)
+                                bind.buffer.assumingMemoryBound(to: CUnsignedShort.self).deallocate()
                             case MYSQL_TYPE_TINY:
-                                bind.buffer.assumingMemoryBound(to: CUnsignedChar.self).deallocate(capacity: 1)
+                                bind.buffer.assumingMemoryBound(to: CUnsignedChar.self).deallocate()
                             default: break
                             }
                         } else {
                             switch bind.buffer_type {
                             case MYSQL_TYPE_LONGLONG:
-                                bind.buffer.assumingMemoryBound(to: CLongLong.self).deallocate(capacity: 1)
+                                bind.buffer.assumingMemoryBound(to: CLongLong.self).deallocate()
                             case MYSQL_TYPE_LONG, MYSQL_TYPE_INT24:
-                                bind.buffer.assumingMemoryBound(to: CInt.self).deallocate(capacity: 1)
+                                bind.buffer.assumingMemoryBound(to: CInt.self).deallocate()
                             case MYSQL_TYPE_SHORT:
-                                bind.buffer.assumingMemoryBound(to: CShort.self).deallocate(capacity: 1)
+                                bind.buffer.assumingMemoryBound(to: CShort.self).deallocate()
                             case MYSQL_TYPE_TINY:
-                                bind.buffer.assumingMemoryBound(to: CChar.self).deallocate(capacity: 1)
+                                bind.buffer.assumingMemoryBound(to: CChar.self).deallocate()
                             default: break
                             }
                         }
@@ -1269,7 +1266,7 @@ public final class MySQLStmt {
 
 							let raw = UnsafeMutablePointer<UInt8>.allocate(capacity: length)
 							defer {
-								raw.deallocate(capacity: length)
+								raw.deallocate()
 							}
 							bind.buffer = UnsafeMutableRawPointer(raw)
 							bind.buffer_length = UInt(length)
@@ -1290,7 +1287,7 @@ public final class MySQLStmt {
 
 							let raw = UnsafeMutablePointer<UInt8>.allocate(capacity: length)
 							defer {
-								raw.deallocate(capacity: length)
+								raw.deallocate()
 							}
 							bind.buffer = UnsafeMutableRawPointer(raw)
 							bind.buffer_length = UInt(length)

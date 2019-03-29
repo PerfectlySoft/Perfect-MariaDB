@@ -22,7 +22,11 @@
 import XCTest
 @testable import MariaDB
 
+#if os(Linux)
+let testHost = "172.23.0.2"
+#else
 let testHost = "127.0.0.1"
+#endif
 let testUser = "root"
 // PLEASE change to whatever your actual password is before running these tests
 let testPassword = "123"//testpassword"

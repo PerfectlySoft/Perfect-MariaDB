@@ -1,0 +1,4 @@
+module mariadbclient {
+    header "mariadb.h"
+    export *
+}
