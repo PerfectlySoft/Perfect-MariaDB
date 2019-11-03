@@ -32,7 +32,7 @@ let package = Package(
     ],
     targets: [
         .systemLibrary(name: "mariadbclient",
-            pkgConfig: "mariadb",
+            pkgConfig: "libmariadb",
             providers: [
                 .apt(["libmariadb-client-lgpl-dev"]),
                 .brew(["mariadb-connector-c"])
