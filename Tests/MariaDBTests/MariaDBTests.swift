@@ -1435,7 +1435,6 @@ class MariaDBTests: XCTestCase {
 	}
 	
 	func testCodableProperty() {
-		/*
 		do {
 			struct Sub: Codable {
 				let id: Int
@@ -1456,7 +1455,6 @@ class MariaDBTests: XCTestCase {
 		} catch {
 			XCTFail("\(error)")
 		}
-		*/
 	}
 	
 	func testBadDecoding() {
