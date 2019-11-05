@@ -53,70 +53,37 @@ Ensure you have installed and activated the latest Swift tool chain.
 ### To install MariaDB connector:
 
 ```bash
- brew install mariadb-connector-c
-```
-
-You will have to deal with pkg-config file, such as: /usr/local/lib/pkgconfig/mariadb.pc, similar with below:
-
-```bash
-libdir=/usr/local/lib/mariadb
-includedir=/usr/local/include/mariadb
-
-Name: mariadb
-Description: MariaDB Connector/C
-Version: 5.5.1
-Requires:
-Libs: -L${libdir} -lmariadb  -ldl -lm -lpthread
-Cflags: -I${includedir}
-Libs_r: -L${libdir} -lmariadb -ldl -lm -lpthread
-```
-
-Then please also edit your ~/.bash_profile with the following line:
-
-```
-export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/lib/pkgconfig"
-```
-
-once done, reload this profile as
-
-```
-source ~/.bash_profile
-```
-
-To test if pkg-config is working, try command:
-
-```
-$ pkg-config mariadb --cflags --libs
+brew install mariadb-connector-c
 ```
 
 ## Linux Build Notes
 
 
-Tests performed on Ubuntu 16.04. Prior to build this library, please ensure:
-
-```
-sudo apt-get install pkg-config libmariadb2 libmariadb-client-lgpl-dev  
-```
-
-Please also make sure the pkg-config file /usr/lib/pkgconfig/mariadb.pc specified for MariaDB should be MANUALLY added and corrected before building, possibly looks like this:
+Tests performed on Ubuntu 18.04. Prior to building this library, please ensure you install the required MariaDB library:
 
 ```bash
+sudo apt-get install pkg-config libmariadb-dev  
+```
+
+On older distros (like 16.04), you may need to install libmariadb-client-lgpl-dev instead of libmariadb-dev. On older versions, you will also need to create a pkg-config file. In such cases, create /usr/lib/pkgconfig/libmariadb.pc and make it look something like this:
+
+```
 libdir=/usr/lib/x86_64-linux-gnu
 includedir=/usr/include/mariadb
 
-Name: mariadb
+Name: libmariadb
 Description: MariaDB Connector/C
 Version: 5.5.0
 Requires:
-Libs: -L${libdir} -lmariadb  -ldl -lm -lpthread
 Cflags: -I${includedir}
-Libs_r: -L${libdir} -lmariadb -ldl -lm -lpthread
+Libs: -L${libdir} -lmariadb
+Libs.private: -ldl -lm -lpthread
 ```
 
-To test if pkg-config is working, try command:
+To test if pkg-config is working, try running the command:
 
-```
-$ pkg-config mariadb --cflags --libs
+```bash
+pkg-config libmariadb --cflags --libs
 ```
 
 ## Building
