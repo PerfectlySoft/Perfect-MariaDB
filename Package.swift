@@ -28,13 +28,13 @@ let package = Package(
             targets: ["MariaDB"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", from: "1.2.2")
+        .package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", from: "1.2.3")
     ],
     targets: [
         .systemLibrary(name: "mariadbclient",
-            pkgConfig: "mariadb",
+            pkgConfig: "libmariadb",
             providers: [
-                .apt(["libmariadb-client-lgpl-dev"]),
+                .apt(["libmariadb-dev"]),
                 .brew(["mariadb-connector-c"])
             ]
         ),
