@@ -91,7 +91,7 @@ pkg-config libmariadb --cflags --libs
 Add this project as a dependency in your Package.swift file.
 
 ```
-.package(url:"https://github.com/PerfectlySoft/Perfect-MariaDB.git", from: "4.0.0")
+.package(url:"https://github.com/PerfectlySoft/Perfect-MariaDB.git", from: "3.0.0")
 ...
 dependencies: ["MariaDB"]),
 ```
