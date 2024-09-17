@@ -191,7 +191,7 @@ class MySQLGenDelegate: SQLGenDelegate {
 		return "() VALUES ()"
 	}
 	
-	func getBinding(for expr: Expression) throws -> String {
+	func getBinding(for expr: PerfectCRUD.Expression) throws -> String {
 		bindings.append(("?", expr))
 		return "?"
 	}
