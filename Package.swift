@@ -1,48 +1,36 @@
-// swift-tools-version:4.2
-//
-//  Package.swift
-//  Perfect-MariaDB
-//
-//  Created by Rockford Wei on 10/04/16.
-//	Copyright (C) 2016 PerfectlySoft, Inc.
-//
-//===----------------------------------------------------------------------===//
-//
-// This source file is part of the Perfect.org open source project
-//
-// Copyright (c) 2015 - 2016 PerfectlySoft Inc. and the Perfect project authors
-// Licensed under Apache License v2.0
-//
-// See http://perfect.org/licensing.html for license information
-//
-//===----------------------------------------------------------------------===//
-//
-
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
     name: "MariaDB",
+    platforms: [.macOS(.v26)],
     products: [
-        .library(
-            name: "MariaDB",
-            targets: ["MariaDB"]),
+        .library(name: "MariaDB", targets: ["MariaDB"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", from: "1.2.3")
+        .package(path: "../Perfect-CRUD"),
     ],
     targets: [
-        .systemLibrary(name: "mariadbclient",
+        .systemLibrary(
+            name: "mariadbclient",
             pkgConfig: "libmariadb",
             providers: [
                 .apt(["libmariadb-dev"]),
-                .brew(["mariadb-connector-c"])
+                .brew(["mariadb-connector-c"]),
             ]
         ),
         .target(
             name: "MariaDB",
-            dependencies: ["mariadbclient", "PerfectCRUD"]),
+            dependencies: [
+                "mariadbclient",
+                .product(name: "PerfectCRUD", package: "Perfect-CRUD"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         .testTarget(
             name: "MariaDBTests",
-            dependencies: ["MariaDB"]),
+            dependencies: ["MariaDB", "mariadbclient"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
     ]
 )
