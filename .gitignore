@@ -67,3 +67,6 @@ MariaDB.xcodeproj/
 /*.resolved
 /*.pins
 /.build*
+
+# Local SwiftPM dependency mirrors (machine-specific absolute paths, never commit)
+.swiftpm/

@@ -8,7 +8,7 @@ let package = Package(
         .library(name: "MariaDB", targets: ["MariaDB"]),
     ],
     dependencies: [
-        .package(path: "../Perfect-CRUD"),
+        .package(url: "https://github.com/taplin/Perfect-CRUD.git", branch: "main"),
     ],
     targets: [
         .systemLibrary(
