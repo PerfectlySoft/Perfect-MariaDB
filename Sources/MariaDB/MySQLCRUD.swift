@@ -103,7 +103,15 @@ class MySQLCRUDRowReader<K: CodingKey>: KeyedDecodingContainerProtocol, @uncheck
             }
             return try JSONDecoder().decode(type, from: data)
         case .wrapped:
-            throw CRUDDecoderError("Unsupported type: \(type) for key: \(key.stringValue)")
+            // Same fix as Perfect-MySQL's MySQLCRUDRowReader (ADR-0001
+            // Phase 4): delegate to the property wrapper's own
+            // init(from:) instead of throwing unconditionally. Needs the
+            // matching PerfectCRUD-side fix (CRUDColumnValueDecoder's
+            // generic decode<T> routing primitives through its own
+            // dedicated methods) to actually work for primitive-typed
+            // wrapped values like @ForeignKey<..., Int>.
+            let decoder = CRUDColumnValueDecoder(source: KeyedDecodingContainer(self), key: key)
+            return try T(from: decoder)
         }
     }
     func nestedContainer<NestedKey>(keyedBy type: NestedKey.Type, forKey key: Key) throws -> KeyedDecodingContainer<NestedKey> where NestedKey: CodingKey {
