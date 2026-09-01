@@ -1,56 +1,32 @@
-# Perfect - MariaDB Connector [简体中文](README.zh_CN.md)
+# Perfect - MariaDB Connector
 
 <p align="center">
-    <a href="http://perfect.org/get-involved.html" target="_blank">
-        <img src="http://perfect.org/assets/github/perfect_github_2_0_0.jpg" alt="Get Involed with Perfect!" width="854" />
-    </a>
+    <img src="https://img.shields.io/badge/Swift-6.2-orange.svg?style=flat" alt="Swift 6.2">
+    <img src="https://img.shields.io/badge/Platforms-macOS%2012%2B-lightgray.svg?style=flat" alt="Platforms macOS 12+">
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-lightgrey.svg?style=flat" alt="License Apache 2.0"></a>
 </p>
 
-<p align="center">
-    <a href="https://github.com/PerfectlySoft/Perfect" target="_blank">
-        <img src="http://www.perfect.org/github/Perfect_GH_button_1_Star.jpg" alt="Star Perfect On Github" />
-    </a>  
-    <a href="http://stackoverflow.com/questions/tagged/perfect" target="_blank">
-        <img src="http://www.perfect.org/github/perfect_gh_button_2_SO.jpg" alt="Stack Overflow" />
-    </a>  
-    <a href="https://twitter.com/perfectlysoft" target="_blank">
-        <img src="http://www.perfect.org/github/Perfect_GH_button_3_twit.jpg" alt="Follow Perfect on Twitter" />
-    </a>  
-    <a href="http://perfect.ly" target="_blank">
-        <img src="http://www.perfect.org/github/Perfect_GH_button_4_slack.jpg" alt="Join the Perfect Slack" />
-    </a>
-</p>
+A Swift wrapper around the MariaDB client library (libmariadb), enabling access to MariaDB/MySQL
+database servers, with a [Perfect-CRUD](https://github.com/PerfectlySoft/Perfect-CRUD) backend so
+CRUD's declarative model/query API can target a MariaDB or MySQL server.
 
-<p align="center">
-    <a href="https://developer.apple.com/swift/" target="_blank">
-        <img src="https://img.shields.io/badge/Swift-5.0-orange.svg?style=flat" alt="Swift 5.0">
-    </a>
-    <a href="https://developer.apple.com/swift/" target="_blank">
-        <img src="https://img.shields.io/badge/Platforms-OS%20X%20%7C%20Linux%20-lightgray.svg?style=flat" alt="Platforms OS X | Linux">
-    </a>
-    <a href="http://perfect.org/licensing.html" target="_blank">
-        <img src="https://img.shields.io/badge/License-Apache-lightgrey.svg?style=flat" alt="License Apache">
-    </a>
-    <a href="http://twitter.com/PerfectlySoft" target="_blank">
-        <img src="https://img.shields.io/badge/Twitter-@PerfectlySoft-blue.svg?style=flat" alt="PerfectlySoft Twitter">
-    </a>
-    <a href="http://perfect.ly" target="_blank">
-        <img src="http://perfect.ly/badge.svg" alt="Slack Status">
-    </a>
-</p>
+**Modernized for Swift 6**: `swiftLanguageMode(.v6)` on all targets, Sendable/`@unchecked Sendable`
+annotations throughout for strict concurrency (this remains a fully synchronous wrapper around the
+blocking C `mysql_*` API — there is no async/await here; thread-safety around `MySQL`/`MySQLStmt`
+instances is the caller's responsibility), deprecated API replacements, and a migration of the test
+suite from XCTest to Swift Testing.
 
+**Status:** real, working, tested infrastructure — staged as an alternative database backend
+alongside [Perfect-MySQL](https://github.com/PerfectlySoft/Perfect-MySQL), for teams that want a
+MariaDB target rather than not-yet-in-use or dead code.
 
+The pre-Swift-6 version of this package is preserved on the [`legacy`](../../tree/legacy) branch.
 
-This project provides a Swift wrapper around the MariaDB client library, enabling access to MariaDB database servers.
+## macOS Build Notes
 
-This package builds with Swift Package Manager and is part of the [Perfect](https://github.com/PerfectlySoft/Perfect) project. It was written to be stand-alone and so does not require PerfectLib or any other components.
+`Package.swift` declares `platforms: [.macOS(.v12)]`.
 
-Ensure you have installed and activated the latest Swift tool chain.
-
-
-## OS X Build Notes
-
-### To install MariaDB connector:
+### To install the MariaDB connector:
 
 ```bash
 brew install mariadb-connector-c
@@ -58,26 +34,10 @@ brew install mariadb-connector-c
 
 ## Linux Build Notes
 
-
-Tests performed on Ubuntu 18.04. Prior to building this library, please ensure you install the required MariaDB library:
+Linux is not declared in the `platforms` array in `Package.swift` (only `.macOS(.v12)` is), so it is not an officially asserted/tested target. That said, the `mariadbclient` system-library target still declares an `.apt(["libmariadb-dev"])` provider, so a Linux build remains possible at the toolchain level if you ensure the library is installed:
 
 ```bash
-sudo apt-get install pkg-config libmariadb-dev  
-```
-
-On older distros (like 16.04), you may need to install libmariadb-client-lgpl-dev instead of libmariadb-dev. On older versions, you will also need to create a pkg-config file. In such cases, create /usr/lib/pkgconfig/libmariadb.pc and make it look something like this:
-
-```
-libdir=/usr/lib/x86_64-linux-gnu
-includedir=/usr/include/mariadb
-
-Name: libmariadb
-Description: MariaDB Connector/C
-Version: 5.5.0
-Requires:
-Cflags: -I${includedir}
-Libs: -L${libdir} -lmariadb
-Libs.private: -ldl -lm -lpthread
+sudo apt-get install pkg-config libmariadb-dev
 ```
 
 To test if pkg-config is working, try running the command:
@@ -88,22 +48,39 @@ pkg-config libmariadb --cflags --libs
 
 ## Building
 
-Add this project as a dependency in your Package.swift file.
+This package is consumed within the Perfect-Resurrection monorepo as a local sibling checkout, not a tagged GitHub release. Add it to your `Package.swift` as a relative path dependency, alongside Perfect-CRUD (required, since Perfect-MariaDB's CRUD support depends on it):
 
-```
-.package(url:"https://github.com/PerfectlySoft/Perfect-MariaDB.git", from: "3.0.0")
-...
-dependencies: ["MariaDB"]),
+```swift
+dependencies: [
+    .package(path: "../Perfect-MariaDB"),
+    .package(path: "../Perfect-CRUD"),
+],
+targets: [
+    .target(
+        name: "YourTarget",
+        dependencies: [
+            "MariaDB",
+            .product(name: "PerfectCRUD", package: "Perfect-CRUD"),
+        ]
+    ),
+]
 ```
 
+This means Perfect-MariaDB must be checked out alongside its sibling Perfect-Resurrection repos (in particular `../Perfect-CRUD`) for the build to resolve.
 
 Import required libraries:
-```
+```swift
 import MariaDB
 import PerfectCRUD
 ```
 
-Perfect-MariaDB supports the Perfect-CRUD protocol. Please check [Perfect-CRUD](https://github.com/PerfectlySoft/Perfect-CRUD.git) for more information.
+Perfect-MariaDB implements the Perfect-CRUD protocol via `MySQLDatabaseConfiguration` (see `Sources/MariaDB/MySQLCRUD.swift`), letting Perfect-CRUD's declarative model/query API target a MariaDB/MySQL server. See [Perfect-CRUD](../Perfect-CRUD) (a local sibling repo in this monorepo, not an external dependency) for the CRUD API itself.
+
+Note: the source files retain their original `MySQLCRUD.swift`/`MySQLStmt.swift` naming from this package's shared lineage with [Perfect-MySQL](../Perfect-MySQL) — MariaDB is wire-compatible with the MySQL client protocol, and the two packages are separate, independently-buildable connectors in this ecosystem.
+
+## Testing
+
+A `MariaDBTests` target and a `docker-compose.yml` (spins up a local MariaDB container) are included for running the test suite against a real server.
 
 ## Further Information
-For more information on the Perfect project, please visit [perfect.org](http://perfect.org).
+For background on the broader Perfect framework, see [perfect.org](http://perfect.org) and [PerfectlySoft/Perfect](https://github.com/PerfectlySoft/Perfect).
