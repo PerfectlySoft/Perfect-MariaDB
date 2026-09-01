@@ -1,29 +1,30 @@
-# Perfect - MariaDB Connector [简体中文](README.zh_CN.md)
+# Perfect - MariaDB Connector
 
 <p align="center">
-    <a href="https://developer.apple.com/swift/" target="_blank">
-        <img src="https://img.shields.io/badge/Swift-6.2-orange.svg?style=flat" alt="Swift 6.2">
-    </a>
-    <a href="https://developer.apple.com/swift/" target="_blank">
-        <img src="https://img.shields.io/badge/Platforms-macOS%2026%2B-lightgray.svg?style=flat" alt="Platforms macOS 26+">
-    </a>
-    <a href="LICENSE" target="_blank">
-        <img src="https://img.shields.io/badge/License-Apache--2.0-lightgrey.svg?style=flat" alt="License Apache 2.0">
-    </a>
+    <img src="https://img.shields.io/badge/Swift-6.2-orange.svg?style=flat" alt="Swift 6.2">
+    <img src="https://img.shields.io/badge/Platforms-macOS%2012%2B-lightgray.svg?style=flat" alt="Platforms macOS 12+">
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-lightgrey.svg?style=flat" alt="License Apache 2.0"></a>
 </p>
 
-This project provides a Swift wrapper around the MariaDB client library (libmariadb), enabling access to MariaDB/MySQL database servers, with a [Perfect-CRUD](../Perfect-CRUD) backend so CRUD's declarative model/query API can target a MariaDB or MySQL server.
+A Swift wrapper around the MariaDB client library (libmariadb), enabling access to MariaDB/MySQL
+database servers, with a [Perfect-CRUD](https://github.com/PerfectlySoft/Perfect-CRUD) backend so
+CRUD's declarative model/query API can target a MariaDB or MySQL server.
 
-This is part of the [Perfect-Resurrection](..) project — a Swift 6 / macOS 26 revival of the original [PerfectlySoft](https://github.com/PerfectlySoft/Perfect) framework. It was resurrected in a single commit (`1033d2e`, "Resurrect for Swift 6 / macOS 26"): swift-tools-version bumped to 6.2, `swiftLanguageMode(.v6)` on all targets, Sendable/`@unchecked Sendable` annotations added throughout for Swift 6 strict concurrency (this remains a fully synchronous wrapper around the blocking C `mysql_*` API — there is no async/await here; thread-safety around `MySQL`/`MySQLStmt` instances is the caller's responsibility), deprecated API replacements, and a migration of the test suite from XCTest to Swift Testing.
+**Modernized for Swift 6**: `swiftLanguageMode(.v6)` on all targets, Sendable/`@unchecked Sendable`
+annotations throughout for strict concurrency (this remains a fully synchronous wrapper around the
+blocking C `mysql_*` API — there is no async/await here; thread-safety around `MySQL`/`MySQLStmt`
+instances is the caller's responsibility), deprecated API replacements, and a migration of the test
+suite from XCTest to Swift Testing.
 
-**Ecosystem status:** Perfect-MariaDB is real, working, tested infrastructure, but it is not yet wired into Perfect-Lasso (a Swift reimplementation of the Lasso language, still in active development and not yet production-ready, that this ecosystem exists to support). No other package in the ecosystem currently depends on it — it's staged as an alternative database backend alongside the currently-used [Perfect-MySQL](../Perfect-MySQL), for future integration rather than immediate use.
+**Status:** real, working, tested infrastructure — staged as an alternative database backend
+alongside [Perfect-MySQL](https://github.com/PerfectlySoft/Perfect-MySQL), for teams that want a
+MariaDB target rather than not-yet-in-use or dead code.
 
-Requires Swift 6.2 (swift-tools-version 6.2) and macOS 26 or later, per this package's `Package.swift`. Ensure you have installed and activated a matching Swift tool chain.
-
+The pre-Swift-6 version of this package is preserved on the [`legacy`](../../tree/legacy) branch.
 
 ## macOS Build Notes
 
-`Package.swift` declares `platforms: [.macOS(.v26)]`, so macOS 26+ is the officially supported and tested platform.
+`Package.swift` declares `platforms: [.macOS(.v12)]`.
 
 ### To install the MariaDB connector:
 
@@ -33,7 +34,7 @@ brew install mariadb-connector-c
 
 ## Linux Build Notes
 
-Linux is not declared in the `platforms` array in `Package.swift` (only `.macOS(.v26)` is), so it is not an officially asserted/tested target for this resurrection. That said, the `mariadbclient` system-library target still declares an `.apt(["libmariadb-dev"])` provider, so a Linux build remains possible at the toolchain level if you ensure the library is installed:
+Linux is not declared in the `platforms` array in `Package.swift` (only `.macOS(.v12)` is), so it is not an officially asserted/tested target. That said, the `mariadbclient` system-library target still declares an `.apt(["libmariadb-dev"])` provider, so a Linux build remains possible at the toolchain level if you ensure the library is installed:
 
 ```bash
 sudo apt-get install pkg-config libmariadb-dev
@@ -82,4 +83,4 @@ Note: the source files retain their original `MySQLCRUD.swift`/`MySQLStmt.swift`
 A `MariaDBTests` target and a `docker-compose.yml` (spins up a local MariaDB container) are included for running the test suite against a real server.
 
 ## Further Information
-This package is part of [Perfect-Resurrection](..), a Swift 6 / macOS 26 revival of the original Perfect framework. For background on the original upstream project, see [perfect.org](http://perfect.org) and [PerfectlySoft/Perfect](https://github.com/PerfectlySoft/Perfect).
+For background on the broader Perfect framework, see [perfect.org](http://perfect.org) and [PerfectlySoft/Perfect](https://github.com/PerfectlySoft/Perfect).

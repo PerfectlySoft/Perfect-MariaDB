@@ -3,12 +3,12 @@ import PackageDescription
 
 let package = Package(
     name: "MariaDB",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v12)],
     products: [
         .library(name: "MariaDB", targets: ["MariaDB"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/taplin/Perfect-CRUD.git", branch: "main"),
+        .package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", branch: "main"),
     ],
     targets: [
         .systemLibrary(
