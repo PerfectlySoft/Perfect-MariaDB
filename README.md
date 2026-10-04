@@ -48,25 +48,28 @@ pkg-config libmariadb --cflags --libs
 
 ## Building
 
-This package is consumed within the Perfect-Resurrection monorepo as a local sibling checkout, not a tagged GitHub release. Add it to your `Package.swift` as a relative path dependency, alongside Perfect-CRUD (required, since Perfect-MariaDB's CRUD support depends on it):
+Add it to your `Package.swift`. There is no tagged release of the Swift 6 version yet, so depend on `main`:
 
 ```swift
 dependencies: [
-    .package(path: "../Perfect-MariaDB"),
-    .package(path: "../Perfect-CRUD"),
+    .package(url: "https://github.com/PerfectlySoft/Perfect-MariaDB.git", branch: "main"),
+    .package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", branch: "main"),
 ],
 targets: [
     .target(
         name: "YourTarget",
         dependencies: [
-            "MariaDB",
+            .product(name: "PerfectMariaDB", package: "Perfect-MariaDB"),
             .product(name: "PerfectCRUD", package: "Perfect-CRUD"),
         ]
     ),
 ]
 ```
 
-This means Perfect-MariaDB must be checked out alongside its sibling Perfect-Resurrection repos (in particular `../Perfect-CRUD`) for the build to resolve.
+The library product is named `PerfectMariaDB`, matching `PerfectMySQL` and `PerfectPostgreSQL`; the module is still
+imported as `MariaDB`. **Breaking change:** it used to be called `MariaDB`, so if you depended on `main` before this
+rename, change `.product(name: "MariaDB", ...)` (or a bare `"MariaDB"` dependency) to
+`.product(name: "PerfectMariaDB", package: "Perfect-MariaDB")`.
 
 Import required libraries:
 ```swift
@@ -74,9 +77,9 @@ import MariaDB
 import PerfectCRUD
 ```
 
-Perfect-MariaDB implements the Perfect-CRUD protocol via `MySQLDatabaseConfiguration` (see `Sources/MariaDB/MySQLCRUD.swift`), letting Perfect-CRUD's declarative model/query API target a MariaDB/MySQL server. See [Perfect-CRUD](../Perfect-CRUD) (a local sibling repo in this monorepo, not an external dependency) for the CRUD API itself.
+Perfect-MariaDB implements the Perfect-CRUD protocol via `MySQLDatabaseConfiguration` (see `Sources/MariaDB/MySQLCRUD.swift`), letting Perfect-CRUD's declarative model/query API target a MariaDB/MySQL server. See [Perfect-CRUD](https://github.com/PerfectlySoft/Perfect-CRUD) for the CRUD API itself.
 
-Note: the source files retain their original `MySQLCRUD.swift`/`MySQLStmt.swift` naming from this package's shared lineage with [Perfect-MySQL](../Perfect-MySQL) — MariaDB is wire-compatible with the MySQL client protocol, and the two packages are separate, independently-buildable connectors in this ecosystem.
+Note: the source files retain their original `MySQLCRUD.swift`/`MySQLStmt.swift` naming from this package's shared lineage with [Perfect-MySQL](https://github.com/PerfectlySoft/Perfect-MySQL) — MariaDB is wire-compatible with the MySQL client protocol, and the two packages are separate, independently-buildable connectors in this ecosystem.
 
 ## Testing
 
@@ -84,3 +87,13 @@ A `MariaDBTests` target and a `docker-compose.yml` (spins up a local MariaDB con
 
 ## Further Information
 For background on the broader Perfect framework, see [perfect.org](http://perfect.org) and [PerfectlySoft/Perfect](https://github.com/PerfectlySoft/Perfect).
+
+## Testing
+
+The tests that need a server are skipped unless `MARIA_TESTS=1` is set. They connect to `127.0.0.1` as `root` with
+password `123` by default; override with `MARIA_TEST_HOST`, `MARIA_TEST_PORT`, `MARIA_TEST_USER` and
+`MARIA_TEST_PASSWORD`. For example, with a throwaway MariaDB container on port 3308:
+
+```sh
+MARIA_TESTS=1 MARIA_TEST_PORT=3308 swift test
+```

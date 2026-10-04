@@ -3,11 +3,14 @@ import Testing
 @testable import MariaDB
 import PerfectCRUD
 
-// Run with: MARIA_TESTS=1 swift test -Xcc -I/opt/homebrew/Cellar/mariadb-connector-c/3.4.9/include/mariadb PKG_CONFIG_PATH=/opt/homebrew/opt/mariadb-connector-c/lib/pkgconfig swift test
+// Run with: MARIA_TESTS=1 [MARIA_TEST_HOST=… MARIA_TEST_PORT=… MARIA_TEST_USER=… MARIA_TEST_PASSWORD=…] swift test
 
-private let testHost = "127.0.0.1"
-private let testUser = "root"
-private let testPassword = "123"
+// Overridable like the foreign-key tests' MARIA_TEST_* settings.
+private let testEnv = ProcessInfo.processInfo.environment
+private let testHost = testEnv["MARIA_TEST_HOST"] ?? "127.0.0.1"
+private let testPort = testEnv["MARIA_TEST_PORT"].flatMap(Int.init)
+private let testUser = testEnv["MARIA_TEST_USER"] ?? "root"
+private let testPassword = testEnv["MARIA_TEST_PASSWORD"] ?? "123"
 private let testSchema = "test"
 private let testDB = "test"
 private let testDBRowCount = 5
@@ -19,7 +22,7 @@ private func makeMySQL() -> MySQL {
     let m = MySQL()
     _ = m.setOption(.MYSQL_OPT_CONNECT_TIMEOUT, 5)
     _ = m.setOption(.MYSQL_SET_CHARSET_NAME, "utf8mb4")
-    _ = m.connect(host: testHost, user: testUser, password: testPassword)
+    _ = m.connect(host: testHost, user: testUser, password: testPassword, port: UInt32(testPort ?? 0))
     if m.selectDatabase(named: testSchema) == false {
         _ = m.query(statement: "CREATE SCHEMA `\(testSchema)` DEFAULT CHARACTER SET utf8mb4")
         _ = m.selectDatabase(named: testSchema)
@@ -31,7 +34,7 @@ private var rawMySQL: MySQL {
     let mysql = MySQL()
     _ = mysql.setOption(.MYSQL_OPT_CONNECT_TIMEOUT, 5)
     _ = mysql.setOption(.MYSQL_SET_CHARSET_NAME, "utf8mb4")
-    _ = mysql.connect(host: testHost, user: testUser, password: testPassword, db: "mysql")
+    _ = mysql.connect(host: testHost, user: testUser, password: testPassword, db: "mysql", port: UInt32(testPort ?? 0))
     _ = mysql.query(statement: "CREATE DATABASE IF NOT EXISTS \(testDB) DEFAULT CHARACTER SET utf8mb4")
     _ = mysql.selectDatabase(named: testDB)
     return mysql
@@ -40,12 +43,12 @@ private var rawMySQL: MySQL {
 private func getDB(reset: Bool = true) throws -> Database<DBConfiguration> {
     if reset {
         let db = Database(configuration: try DBConfiguration(
-            database: "mysql", host: testHost, username: testUser, password: testPassword))
+            database: "mysql", host: testHost, port: testPort, username: testUser, password: testPassword))
         try db.sql("DROP DATABASE IF EXISTS \(testDB)")
         try db.sql("CREATE DATABASE \(testDB) DEFAULT CHARACTER SET utf8mb4")
     }
     return Database(configuration: try DBConfiguration(
-        database: testDB, host: testHost, username: testUser, password: testPassword))
+        database: testDB, host: testHost, port: testPort, username: testUser, password: testPassword))
 }
 
 private struct TestTable1: Codable, TableNameProvider {
@@ -111,7 +114,7 @@ struct MariaDBTests {
         #expect(mysql.setOption(.MYSQL_OPT_RECONNECT, true))
         #expect(mysql.setOption(.MYSQL_OPT_LOCAL_INFILE))
         #expect(mysql.setOption(.MYSQL_OPT_CONNECT_TIMEOUT, 5))
-        let res = mysql.connect(host: testHost, user: testUser, password: testPassword)
+        let res = mysql.connect(host: testHost, user: testUser, password: testPassword, port: UInt32(testPort ?? 0))
         #expect(res)
         let sres = mysql.selectDatabase(named: testSchema)
             || mysql.query(statement: "CREATE SCHEMA `\(testSchema)` DEFAULT CHARACTER SET utf8mb4")
@@ -966,5 +969,170 @@ struct MariaDBTests {
         let table = db.table(ReturningItem.self)
         let id = try table.insert(ReturningItem(id: 0, def: 0), ignoreKeys: \ReturningItem.id, \ReturningItem.def).lastInsertId()
         #expect(id == 1)
+    }
+}
+
+/// Statements a server can't prepare must still run; unreadable rows must fail loudly; MySQLStmt
+/// must keep its connection alive; fieldNames() must work, including for CALL. Runs against
+/// MariaDB and MySQL servers (MySQL refuses to prepare more statements than MariaDB does).
+@Suite(.serialized) struct DirectStatementTests {
+    struct Item: Codable, TableNameProvider {
+        static let tableName = "direct_items"
+        let id: Int
+    }
+
+    struct Answer: Codable {
+        let answer: Int
+    }
+
+    /// No server needed.
+    @Test func firstKeyword() {
+        #expect(MySQLDatabaseConfiguration.firstKeyword("SAVEPOINT crud_sp_2") == "SAVEPOINT")
+        #expect(MySQLDatabaseConfiguration.firstKeyword("  \n\tlock tables t write") == "LOCK")
+        #expect(MySQLDatabaseConfiguration.firstKeyword("SELECT 1") == "SELECT")
+        #expect(MySQLDatabaseConfiguration.firstKeyword("") == "")
+        #expect(!MySQLDatabaseConfiguration.directStatements.contains(MySQLDatabaseConfiguration.firstKeyword("USERS")))
+        #expect(!MySQLDatabaseConfiguration.directStatements.contains(MySQLDatabaseConfiguration.firstKeyword("create table t as select ?")))
+    }
+
+    @Test func nestedTransactionsUseSavepoints() throws {
+        guard mariaEnabled else { return }
+        let db = try getDB()
+        try db.create(Item.self, policy: .dropTable)
+        let items = db.table(Item.self)
+        try db.transaction {
+            try items.insert(Item(id: 1))
+            do {
+                try db.transaction {
+                    try items.insert(Item(id: 2))
+                    throw MySQLCRUDError("roll back the inner transaction")
+                }
+            } catch {}
+            _ = try db.transaction {
+                try items.insert(Item(id: 3))
+            }
+        }
+        #expect(try items.order(by: \.id).select().map(\.id) == [1, 3])
+    }
+
+    @Test func lockAndUnlockTables() throws {
+        guard mariaEnabled else { return }
+        let db = try getDB()
+        try db.create(Item.self, policy: .dropTable)
+        try db.sql("LOCK TABLES direct_items WRITE")
+        try db.table(Item.self).insert(Item(id: 7))
+        try db.sql("  unlock tables")
+        #expect(try db.table(Item.self).count() == 1)
+    }
+
+    @Test func xaStatementsRun() throws {
+        guard mariaEnabled else { return }
+        let db = try getDB()
+        // MySQL can't prepare XA (error 1295 → direct fallback); MariaDB may prepare it.
+        try db.sql("XA START 'perfect-direct-test'")
+        try db.sql("XA END 'perfect-direct-test'")
+        try db.sql("XA ROLLBACK 'perfect-direct-test'")
+        #expect(try db.sql("SELECT 41 + 1 AS answer", Answer.self).first?.answer == 42)
+    }
+
+    @Test func rowReturningStatementsNeverSilentlyLoseRows() throws {
+        guard mariaEnabled else { return }
+        let db = try getDB()
+        // Either the server prepares it and the rows come back, or it can't and we must get
+        // a clear error -- never a silent empty result. CHECK TABLE on a missing table reports
+        // the problem as a row.
+        struct CheckRow: Codable { let Msg_type: String }
+        do {
+            let rows = try db.sql("CHECK TABLE no_such_table", CheckRow.self)
+            #expect(!rows.isEmpty, "a prepared CHECK TABLE must return its report rows")
+        } catch {
+            #expect("\(error)".contains("returned rows"), "\(error)")
+        }
+        #expect(try db.sql("SELECT 41 + 1 AS answer", Answer.self).first?.answer == 42)
+    }
+
+    @Test func multiStatementTextIsFullyDrained() throws {
+        guard mariaEnabled else { return }
+        let mysql = MySQL()
+        #expect(mysql.connect(host: testHost, user: testUser, password: testPassword, db: "mysql",
+                              port: UInt32(testPort ?? 0), flag: 1 << 16)) // CLIENT_MULTI_STATEMENTS
+        let db = Database(configuration: MySQLDatabaseConfiguration(connection: mysql))
+        #expect(throws: (any Error).self) { try db.sql("UNLOCK TABLES; SELECT 1") }
+        // Without draining every result this fails with "Commands out of sync".
+        #expect(try db.sql("SELECT 41 + 1 AS answer", Answer.self).first?.answer == 42)
+    }
+
+    @Test func lowercaseDDLWithBindingsIsStillPrepared() throws {
+        guard mariaEnabled else { return }
+        let db = try getDB()
+        try db.sql("drop table if exists direct_ctas")
+        try db.sql("create table direct_ctas as select ? as answer", bindings: [("?", .integer(42))])
+        #expect(try db.sql("SELECT answer FROM direct_ctas", Answer.self).first?.answer == 42)
+    }
+
+    @Test func fieldNamesIncludingCallAfterExecute() throws {
+        guard mariaEnabled else { return }
+        let mysql = rawMySQL
+        let select = MySQLStmt(mysql)
+        #expect(select.prepare(statement: "SELECT 1 AS one, 'x' AS two"))
+        for _ in 0..<3 {
+            #expect(select.fieldNames() == [0: "one", 1: "two"])
+        }
+        #expect(mysql.query(statement: "DROP PROCEDURE IF EXISTS direct_proc"))
+        #expect(mysql.query(statement: "CREATE PROCEDURE direct_proc() SELECT 1 AS one"))
+        let call = MySQLStmt(mysql)
+        #expect(call.prepare(statement: "CALL direct_proc()"), "\(call.errorMessage())")
+        #expect(call.execute(), "\(call.errorMessage())")
+        #expect(call.fieldNames() == [0: "one"])
+    }
+
+    @Test func unpreparableOnEveryServerFallsBackToDirect() throws {
+        guard mariaEnabled else { return }
+        let db = try getDB()
+        // PREPARE/DEALLOCATE PREPARE can't be prepared on MariaDB or MySQL (error 1295), so this
+        // exercises the fallback on both servers.
+        try db.sql("PREPARE perfect_direct_s FROM 'SELECT 1'")
+        try db.sql("DEALLOCATE PREPARE perfect_direct_s")
+        #expect(try db.sql("SELECT 41 + 1 AS answer", Answer.self).first?.answer == 42)
+    }
+
+    @Test func fieldNamesFollowEachResultSet() throws {
+        guard mariaEnabled else { return }
+        let mysql = rawMySQL
+        #expect(mysql.query(statement: "DROP PROCEDURE IF EXISTS direct_two_sets"))
+        #expect(mysql.query(statement: "CREATE PROCEDURE direct_two_sets() BEGIN SELECT 1 AS a; SELECT 1 AS b, 2 AS c, 3 AS d; END"))
+        let call = MySQLStmt(mysql)
+        #expect(call.prepare(statement: "CALL direct_two_sets()"), "\(call.errorMessage())")
+        #expect(call.execute(), "\(call.errorMessage())")
+        #expect(call.fieldNames() == [0: "a"])
+        call.freeResult()
+        #expect(call.nextResult() == 0)
+        // Reading the second set's names through the first set's metadata read out of bounds.
+        #expect(call.fieldNames() == [0: "b", 1: "c", 2: "d"])
+    }
+
+    @Test func resultsOfCallWithoutFieldNamesFirst() throws {
+        guard mariaEnabled else { return }
+        let mysql = rawMySQL
+        #expect(mysql.query(statement: "DROP PROCEDURE IF EXISTS direct_proc_value"))
+        #expect(mysql.query(statement: "CREATE PROCEDURE direct_proc_value() SELECT 6 * 7 AS v"))
+        let call = MySQLStmt(mysql)
+        #expect(call.prepare(statement: "CALL direct_proc_value()"), "\(call.errorMessage())")
+        #expect(call.execute(), "\(call.errorMessage())")
+        var value: Any?
+        _ = call.results().forEachRow { row in value = row.first ?? nil }
+        #expect(value.map { "\($0)" } == "42", "\(String(describing: value))")
+    }
+
+    @Test func statementKeepsItsConnectionAlive() throws {
+        guard mariaEnabled else { return }
+        // `rawMySQL` makes a new connection; nothing else holds it once the statement exists.
+        let stmt = MySQLStmt(rawMySQL)
+        #expect(stmt.prepare(statement: "SELECT 2 + 2"), "\(stmt.errorMessage())")
+        #expect(stmt.execute(), "\(stmt.errorMessage())")
+        var value: Any?
+        _ = stmt.results().forEachRow { row in value = row.first ?? nil }
+        // MySQL returns BIGINT here, MariaDB a narrower integer; compare the value, not the type.
+        #expect(value.map { "\($0)" } == "4", "\(String(describing: value))")
     }
 }

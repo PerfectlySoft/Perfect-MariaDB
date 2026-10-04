@@ -87,7 +87,7 @@ source ~/.bash_profile
 要验证是否配置成功，请使用命令：
 
 ```
-$ pkg-config mariadb --cflags --libs
+$ pkg-config libmariadb --cflags --libs
 ```
 
 ## Linux 编译时注意事项
@@ -117,18 +117,20 @@ Libs_r: -L${libdir} -lmariadb -ldl -lm -lpthread
 验证是否配置成功，请使用命令：
 
 ```
-$ pkg-config mariadb --cflags --libs
+$ pkg-config libmariadb --cflags --libs
 ```
 
 ## 编译
 
-请在您的Package.swift文件下增加以下内容：
+请在您的 Package.swift 文件中增加以下内容。Swift 6 版本尚未发布带标签的正式版本，因此请依赖 `main` 分支：
 
-```
-.package(url:"https://github.com/PerfectlySoft/Perfect-MariaDB.git", from: "4.0.0")
+```swift
+.package(url: "https://github.com/PerfectlySoft/Perfect-MariaDB.git", branch: "main")
 ...
-dependencies: ["MariaDB"]),
+dependencies: [.product(name: "PerfectMariaDB", package: "Perfect-MariaDB")]),
 ```
+
+库产品名为 `PerfectMariaDB`（与 `PerfectMySQL`、`PerfectPostgreSQL` 一致），模块仍以 `import MariaDB` 导入。**破坏性变更：** 该产品原名为 `MariaDB`，如果您此前依赖 `main` 分支，请把 `.product(name: "MariaDB", ...)`（或直接写的 `"MariaDB"`）改为 `.product(name: "PerfectMariaDB", package: "Perfect-MariaDB")`。
 
 ## 快速上手
 

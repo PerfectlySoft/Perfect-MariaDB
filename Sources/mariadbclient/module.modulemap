@@ -1,4 +1,5 @@
-module mariadbclient {
+module mariadbclient [system] {
     header "mariadb.h"
+    link "mariadb"
     export *
 }

@@ -3,11 +3,14 @@ import Foundation
 
 public final class MySQLStmt: @unchecked Sendable {
     private let ptr: UnsafeMutablePointer<MYSQL_STMT>
+    /// Keeps the connection alive for as long as the statement: `ptr` belongs to it.
+    private let connection: MySQL
     private var paramBinds: UnsafeMutablePointer<MYSQL_BIND>?
     private var paramBindsOffset = 0
     var meta: UnsafeMutablePointer<MYSQL_RES>?
 
     public init(_ mysql: MySQL) {
+        connection = mysql
         ptr = mysql_stmt_init(mysql.ptr)
     }
 
@@ -20,10 +23,14 @@ public final class MySQLStmt: @unchecked Sendable {
     public func fieldNames() -> [Int: String] {
         let columnCount = Int(fieldCount())
         guard columnCount > 0 else { return [:] }
+        // Use the cached metadata; calling mysql_stmt_result_metadata on every call allocated a
+        // new MYSQL_RES each time and never freed it. Refresh it when it's missing (CALL only has
+        // metadata after execute()) or describes a different result set (after nextResult()).
+        refreshMetadataIfStale()
+        guard let meta, let fields = mysql_fetch_fields(meta) else { return [:] }
         var fieldDictionary = [Int: String]()
-        let fields = mysql_fetch_fields(mysql_stmt_result_metadata(ptr))
-        for i in 0..<columnCount {
-            fieldDictionary[i] = String(cString: fields![i].name)
+        for i in 0..<min(columnCount, Int(mysql_num_fields(meta))) {
+            fieldDictionary[i] = String(cString: fields[i].name)
         }
         return fieldDictionary
     }
@@ -146,7 +153,25 @@ public final class MySQLStmt: @unchecked Sendable {
     public func affectedRows() -> UInt { return UInt(mysql_stmt_affected_rows(ptr)) }
     public func insertId() -> UInt { return UInt(mysql_stmt_insert_id(ptr)) }
     public func fieldCount() -> UInt { return UInt(mysql_stmt_field_count(ptr)) }
-    public func nextResult() -> Int { return Int(mysql_stmt_next_result(ptr)) }
+    public func nextResult() -> Int {
+        let r = Int(mysql_stmt_next_result(ptr))
+        if r == 0 {
+            // A new result set: drop the previous one's metadata so it's fetched afresh.
+            if let m = meta { mysql_free_result(m) }
+            meta = nil
+        }
+        return r
+    }
+
+    /// Fetches result metadata if there is none cached, or if the cached metadata's column count
+    /// doesn't match the current result set's. deinit frees it.
+    func refreshMetadataIfStale() {
+        if let m = meta, Int(mysql_num_fields(m)) != Int(fieldCount()) {
+            mysql_free_result(m)
+            meta = nil
+        }
+        if meta == nil { meta = mysql_stmt_result_metadata(ptr) }
+    }
     public func dataSeek(offset: Int) { mysql_stmt_data_seek(ptr, my_ulonglong(offset)) }
     public func paramCount() -> Int { return Int(mysql_stmt_param_count(ptr)) }
 
@@ -292,6 +317,9 @@ public final class MySQLStmt: @unchecked Sendable {
 
         init(_ s: MySQLStmt) {
             stmt = s
+            // bind() reads stmt.meta; make sure it describes this result set (CALL has none
+            // until execute(), and it changes after nextResult()).
+            s.refreshMetadataIfStale()
             numFields = Int(stmt.fieldCount())
             binds = UnsafeMutablePointer<MYSQL_BIND>.allocate(capacity: numFields)
             lengthBuffers = UnsafeMutablePointer<UInt>.allocate(capacity: numFields)
