@@ -326,7 +326,7 @@ struct MySQLDirectExeDelegate: SQLExeDelegate, @unchecked Sendable {
         // This path can't decode text-protocol rows into Codable values. Failing beats silently
         // returning nothing, e.g. for CHECK TABLE, which reports problems as rows.
         if returnedRows {
-            throw MySQLCRUDError("This statement returns rows but the server can't prepare it, so PerfectCRUD can't read them. Run it with MySQL.query(statement:) and MySQL.storeResults().")
+            throw MySQLCRUDError("This statement was run without preparing and returned rows, which PerfectCRUD can't read that way. Run it with MySQL.query(statement:) and MySQL.storeResults().")
         }
         return false
     }
@@ -442,11 +442,13 @@ public struct MySQLDatabaseConfiguration: DatabaseConfigurationProtocol, @unchec
     }
 
     /// Statements run without preparing, matched on their first keyword regardless of case.
-    /// Servers can't prepare some of these (MySQL: BEGIN/START TRANSACTION, SAVEPOINT, RELEASE
-    /// SAVEPOINT, ROLLBACK TO SAVEPOINT, LOCK/UNLOCK TABLES, USE; older MariaDB servers similar);
-    /// Perfect-CRUD's nested `transaction {}` sends the savepoint ones. COMMIT/ROLLBACK take no
-    /// parameters, so running them directly is fine. Anything else the server refuses to
-    /// prepare falls back to direct execution (error 1295).
+    /// MySQL servers can't prepare BEGIN/START TRANSACTION, SAVEPOINT, RELEASE SAVEPOINT,
+    /// ROLLBACK TO SAVEPOINT, LOCK/UNLOCK TABLES or USE; Perfect-CRUD's nested `transaction {}`
+    /// sends the savepoint ones. MariaDB servers prepare these, but none take parameters, so
+    /// running them directly is harmless. (So does MariaDB's `BEGIN NOT ATOMIC ... END` block,
+    /// which throws here if it returns rows.) Anything else the server refuses to prepare
+    /// (error 1295; on MariaDB e.g. PREPARE/EXECUTE/DEALLOCATE PREPARE) falls back to direct
+    /// execution.
     static let directStatements: Set<String> = [
         "BEGIN", "START", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE",
         "LOCK", "UNLOCK", "USE",

@@ -1046,7 +1046,7 @@ struct MariaDBTests {
             let rows = try db.sql("CHECK TABLE no_such_table", CheckRow.self)
             #expect(!rows.isEmpty, "a prepared CHECK TABLE must return its report rows")
         } catch {
-            #expect("\(error)".contains("returns rows"), "\(error)")
+            #expect("\(error)".contains("returned rows"), "\(error)")
         }
         #expect(try db.sql("SELECT 41 + 1 AS answer", Answer.self).first?.answer == 42)
     }
@@ -1084,6 +1084,44 @@ struct MariaDBTests {
         #expect(call.prepare(statement: "CALL direct_proc()"), "\(call.errorMessage())")
         #expect(call.execute(), "\(call.errorMessage())")
         #expect(call.fieldNames() == [0: "one"])
+    }
+
+    @Test func unpreparableOnEveryServerFallsBackToDirect() throws {
+        guard mariaEnabled else { return }
+        let db = try getDB()
+        // PREPARE/DEALLOCATE PREPARE can't be prepared on MariaDB or MySQL (error 1295), so this
+        // exercises the fallback on both servers.
+        try db.sql("PREPARE perfect_direct_s FROM 'SELECT 1'")
+        try db.sql("DEALLOCATE PREPARE perfect_direct_s")
+        #expect(try db.sql("SELECT 41 + 1 AS answer", Answer.self).first?.answer == 42)
+    }
+
+    @Test func fieldNamesFollowEachResultSet() throws {
+        guard mariaEnabled else { return }
+        let mysql = rawMySQL
+        #expect(mysql.query(statement: "DROP PROCEDURE IF EXISTS direct_two_sets"))
+        #expect(mysql.query(statement: "CREATE PROCEDURE direct_two_sets() BEGIN SELECT 1 AS a; SELECT 1 AS b, 2 AS c, 3 AS d; END"))
+        let call = MySQLStmt(mysql)
+        #expect(call.prepare(statement: "CALL direct_two_sets()"), "\(call.errorMessage())")
+        #expect(call.execute(), "\(call.errorMessage())")
+        #expect(call.fieldNames() == [0: "a"])
+        call.freeResult()
+        #expect(call.nextResult() == 0)
+        // Reading the second set's names through the first set's metadata read out of bounds.
+        #expect(call.fieldNames() == [0: "b", 1: "c", 2: "d"])
+    }
+
+    @Test func resultsOfCallWithoutFieldNamesFirst() throws {
+        guard mariaEnabled else { return }
+        let mysql = rawMySQL
+        #expect(mysql.query(statement: "DROP PROCEDURE IF EXISTS direct_proc_value"))
+        #expect(mysql.query(statement: "CREATE PROCEDURE direct_proc_value() SELECT 6 * 7 AS v"))
+        let call = MySQLStmt(mysql)
+        #expect(call.prepare(statement: "CALL direct_proc_value()"), "\(call.errorMessage())")
+        #expect(call.execute(), "\(call.errorMessage())")
+        var value: Any?
+        _ = call.results().forEachRow { row in value = row.first ?? nil }
+        #expect(value.map { "\($0)" } == "42", "\(String(describing: value))")
     }
 
     @Test func statementKeepsItsConnectionAlive() throws {

@@ -130,7 +130,7 @@ $ pkg-config libmariadb --cflags --libs
 dependencies: [.product(name: "PerfectMariaDB", package: "Perfect-MariaDB")]),
 ```
 
-库产品名为 `PerfectMariaDB`，模块仍以 `import MariaDB` 导入。
+库产品名为 `PerfectMariaDB`（与 `PerfectMySQL`、`PerfectPostgreSQL` 一致），模块仍以 `import MariaDB` 导入。**破坏性变更：** 该产品原名为 `MariaDB`，如果您此前依赖 `main` 分支，请把 `.product(name: "MariaDB", ...)`（或直接写的 `"MariaDB"`）改为 `.product(name: "PerfectMariaDB", package: "Perfect-MariaDB")`。
 
 ## 快速上手
 

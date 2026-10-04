@@ -53,20 +53,23 @@ Add it to your `Package.swift`. There is no tagged release of the Swift 6 versio
 ```swift
 dependencies: [
     .package(url: "https://github.com/PerfectlySoft/Perfect-MariaDB.git", branch: "main"),
+    .package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", branch: "main"),
 ],
 targets: [
     .target(
         name: "YourTarget",
         dependencies: [
             .product(name: "PerfectMariaDB", package: "Perfect-MariaDB"),
+            .product(name: "PerfectCRUD", package: "Perfect-CRUD"),
         ]
     ),
 ]
 ```
 
-The library product is named `PerfectMariaDB`; the module is still imported as `MariaDB`. (It used to be called
-`MariaDB`, but on macOS's case-insensitive file system its build output, `libMariaDB.a`, was picked up by the linker in
-place of the system `libmariadb`, so nothing linked.)
+The library product is named `PerfectMariaDB`, matching `PerfectMySQL` and `PerfectPostgreSQL`; the module is still
+imported as `MariaDB`. **Breaking change:** it used to be called `MariaDB`, so if you depended on `main` before this
+rename, change `.product(name: "MariaDB", ...)` (or a bare `"MariaDB"` dependency) to
+`.product(name: "PerfectMariaDB", package: "Perfect-MariaDB")`.
 
 Import required libraries:
 ```swift
@@ -84,3 +87,13 @@ A `MariaDBTests` target and a `docker-compose.yml` (spins up a local MariaDB con
 
 ## Further Information
 For background on the broader Perfect framework, see [perfect.org](http://perfect.org) and [PerfectlySoft/Perfect](https://github.com/PerfectlySoft/Perfect).
+
+## Testing
+
+The tests that need a server are skipped unless `MARIA_TESTS=1` is set. They connect to `127.0.0.1` as `root` with
+password `123` by default; override with `MARIA_TEST_HOST`, `MARIA_TEST_PORT`, `MARIA_TEST_USER` and
+`MARIA_TEST_PASSWORD`. For example, with a throwaway MariaDB container on port 3308:
+
+```sh
+MARIA_TESTS=1 MARIA_TEST_PORT=3308 swift test
+```
