@@ -60,7 +60,9 @@ public final class MySQLStmt: @unchecked Sendable {
         case MYSQL_TYPE_TINY, MYSQL_TYPE_SHORT, MYSQL_TYPE_LONG, MYSQL_TYPE_INT24, MYSQL_TYPE_LONGLONG: return .integer
         case MYSQL_TYPE_TIMESTAMP, MYSQL_TYPE_DATE, MYSQL_TYPE_TIME, MYSQL_TYPE_DATETIME, MYSQL_TYPE_YEAR, MYSQL_TYPE_NEWDATE: return .date
         case MYSQL_TYPE_DECIMAL, MYSQL_TYPE_NEWDECIMAL: return .string
-        case MYSQL_TYPE_TINY_BLOB, MYSQL_TYPE_MEDIUM_BLOB, MYSQL_TYPE_LONG_BLOB, MYSQL_TYPE_BLOB:
+        // BINARY / VARBINARY report as (VAR_)STRING with the binary charset.
+        case MYSQL_TYPE_TINY_BLOB, MYSQL_TYPE_MEDIUM_BLOB, MYSQL_TYPE_LONG_BLOB, MYSQL_TYPE_BLOB,
+             MYSQL_TYPE_STRING, MYSQL_TYPE_VAR_STRING, MYSQL_TYPE_VARCHAR:
             if field.pointee.charsetnr == 63 { return .bytes }
             fallthrough
         default: return .string
@@ -363,7 +365,9 @@ public final class MySQLStmt: @unchecked Sendable {
             case MYSQL_TYPE_TINY, MYSQL_TYPE_SHORT, MYSQL_TYPE_LONG, MYSQL_TYPE_INT24, MYSQL_TYPE_LONGLONG: return .integer(type)
             case MYSQL_TYPE_TIMESTAMP, MYSQL_TYPE_DATE, MYSQL_TYPE_TIME, MYSQL_TYPE_DATETIME, MYSQL_TYPE_YEAR, MYSQL_TYPE_NEWDATE: return .date(type)
             case MYSQL_TYPE_DECIMAL, MYSQL_TYPE_NEWDECIMAL: return .string(type)
-            case MYSQL_TYPE_TINY_BLOB, MYSQL_TYPE_MEDIUM_BLOB, MYSQL_TYPE_LONG_BLOB, MYSQL_TYPE_BLOB:
+            // BINARY / VARBINARY report as (VAR_)STRING with the binary charset.
+            case MYSQL_TYPE_TINY_BLOB, MYSQL_TYPE_MEDIUM_BLOB, MYSQL_TYPE_LONG_BLOB, MYSQL_TYPE_BLOB,
+                 MYSQL_TYPE_STRING, MYSQL_TYPE_VAR_STRING, MYSQL_TYPE_VARCHAR:
                 if field.pointee.charsetnr == 63 { return .bytes(type) }
                 fallthrough
             default: return .string(type)
