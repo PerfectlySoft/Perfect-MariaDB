@@ -105,8 +105,17 @@ private func getTestDB() throws -> Database<DBConfiguration> {
     return try getDB(reset: false)
 }
 
+/// `MariaDBTests` and `DirectStatementTests` both drop and recreate the shared `test` database,
+/// so they must not run in parallel with each other. `.serialized` applies to nested suites too;
+/// on each suite alone it only orders that suite's own tests.
+@Suite(.serialized) struct LiveServerTests {}
+
+extension LiveServerTests {
 @Suite(.serialized)
 struct MariaDBTests {
+    // PerfectCRUD caches table structures by unqualified type name, so test-local types that
+    // share a name (e.g. `Me`, `Top`) would otherwise reuse another test's columns.
+    init() { CRUDClearTableStructureCache() }
 
     @Test func connect() throws {
         guard mariaEnabled else { return }
@@ -281,12 +290,12 @@ struct MariaDBTests {
             #expect(stmt1.execute(), "\(stmt1.errorMessage())")
             let results = stmt1.results()
             defer { results.close() }
+            var rowCount = 0
             let ok = results.forEachRow { e in
+                rowCount += 1
                 #expect(e[0] as? String == "varchar 20 string 👻")
                 #expect(e[1] as? Int8 == 1)
-                if let estrbuffer = e[2] as? [UInt8], let estr = String(bytes: estrbuffer, encoding: .utf8) {
-                    #expect(estr == "text string")
-                }
+                #expect(e[2] as? String == "text string")
                 #expect(e[3] as? String == "2015-10-21")
                 #expect(e[4] as? Int16 == 32767)
                 #expect(e[5] as? Int32 == 8388607)
@@ -301,13 +310,13 @@ struct MariaDBTests {
                 #expect(e[14] as? String == "03:14:07")
                 #expect(e[15] as? String == "2015")
                 #expect(e[16] as? String == "K")
-                #expect(UTF8Encoding.encode(bytes: e[17] as! [UInt8]) == "BLOB DATA")
-                #expect(UTF8Encoding.encode(bytes: e[18] as! [UInt8]) == "tiny text string")
-                #expect(UTF8Encoding.encode(bytes: e[19] as! [UInt8]) == "BLOB DATA")
-                #expect(UTF8Encoding.encode(bytes: e[20] as! [UInt8]) == "BLOB DATA")
-                #expect(UTF8Encoding.encode(bytes: e[21] as! [UInt8]) == "medium text string")
-                #expect(UTF8Encoding.encode(bytes: e[22] as! [UInt8]) == "BLOB DATA")
-                #expect(UTF8Encoding.encode(bytes: e[23] as! [UInt8]) == "long text string")
+                #expect((e[17] as? [UInt8]).map { UTF8Encoding.encode(bytes: $0) } == "BLOB DATA")
+                #expect(e[18] as? String == "tiny text string")
+                #expect((e[19] as? [UInt8]).map { UTF8Encoding.encode(bytes: $0) } == "BLOB DATA")
+                #expect((e[20] as? [UInt8]).map { UTF8Encoding.encode(bytes: $0) } == "BLOB DATA")
+                #expect(e[21] as? String == "medium text string")
+                #expect((e[22] as? [UInt8]).map { UTF8Encoding.encode(bytes: $0) } == "BLOB DATA")
+                #expect(e[23] as? String == "long text string")
                 #expect(e[24] as? String == "1")
                 #expect(e[25] as? String == "2")
                 #expect(e[26] as? Int8 == 1)
@@ -315,6 +324,7 @@ struct MariaDBTests {
                 #expect(e[28] as? String == "1")
             }
             #expect(ok, "\(stmt1.errorMessage())")
+            #expect(rowCount == 2)
         }
     }
 
@@ -1136,3 +1146,4 @@ struct MariaDBTests {
         #expect(value.map { "\($0)" } == "4", "\(String(describing: value))")
     }
 }
+} // extension LiveServerTests
