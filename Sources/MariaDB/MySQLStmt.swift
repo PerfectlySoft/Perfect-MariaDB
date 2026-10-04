@@ -3,11 +3,14 @@ import Foundation
 
 public final class MySQLStmt: @unchecked Sendable {
     private let ptr: UnsafeMutablePointer<MYSQL_STMT>
+    /// Keeps the connection alive for as long as the statement: `ptr` belongs to it.
+    private let connection: MySQL
     private var paramBinds: UnsafeMutablePointer<MYSQL_BIND>?
     private var paramBindsOffset = 0
     var meta: UnsafeMutablePointer<MYSQL_RES>?
 
     public init(_ mysql: MySQL) {
+        connection = mysql
         ptr = mysql_stmt_init(mysql.ptr)
     }
 
@@ -20,10 +23,14 @@ public final class MySQLStmt: @unchecked Sendable {
     public func fieldNames() -> [Int: String] {
         let columnCount = Int(fieldCount())
         guard columnCount > 0 else { return [:] }
+        // Use the metadata cached by prepare(); calling mysql_stmt_result_metadata on every call
+        // allocated a new MYSQL_RES each time and never freed it. Some statements (CALL) only
+        // have metadata after execute(), so fetch it then and cache it; deinit frees it.
+        if meta == nil { meta = mysql_stmt_result_metadata(ptr) }
+        guard let meta, let fields = mysql_fetch_fields(meta) else { return [:] }
         var fieldDictionary = [Int: String]()
-        let fields = mysql_fetch_fields(mysql_stmt_result_metadata(ptr))
         for i in 0..<columnCount {
-            fieldDictionary[i] = String(cString: fields![i].name)
+            fieldDictionary[i] = String(cString: fields[i].name)
         }
         return fieldDictionary
     }

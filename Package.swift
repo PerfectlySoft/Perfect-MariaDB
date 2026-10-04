@@ -5,7 +5,7 @@ let package = Package(
     name: "MariaDB",
     platforms: [.macOS(.v12)],
     products: [
-        .library(name: "MariaDB", targets: ["MariaDB"]),
+        .library(name: "PerfectMariaDB", targets: ["MariaDB"]),
     ],
     dependencies: [
         .package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", branch: "main"),

@@ -48,25 +48,25 @@ pkg-config libmariadb --cflags --libs
 
 ## Building
 
-This package is consumed within the Perfect-Resurrection monorepo as a local sibling checkout, not a tagged GitHub release. Add it to your `Package.swift` as a relative path dependency, alongside Perfect-CRUD (required, since Perfect-MariaDB's CRUD support depends on it):
+Add it to your `Package.swift`. There is no tagged release of the Swift 6 version yet, so depend on `main`:
 
 ```swift
 dependencies: [
-    .package(path: "../Perfect-MariaDB"),
-    .package(path: "../Perfect-CRUD"),
+    .package(url: "https://github.com/PerfectlySoft/Perfect-MariaDB.git", branch: "main"),
 ],
 targets: [
     .target(
         name: "YourTarget",
         dependencies: [
-            "MariaDB",
-            .product(name: "PerfectCRUD", package: "Perfect-CRUD"),
+            .product(name: "PerfectMariaDB", package: "Perfect-MariaDB"),
         ]
     ),
 ]
 ```
 
-This means Perfect-MariaDB must be checked out alongside its sibling Perfect-Resurrection repos (in particular `../Perfect-CRUD`) for the build to resolve.
+The library product is named `PerfectMariaDB`; the module is still imported as `MariaDB`. (It used to be called
+`MariaDB`, but on macOS's case-insensitive file system its build output, `libMariaDB.a`, was picked up by the linker in
+place of the system `libmariadb`, so nothing linked.)
 
 Import required libraries:
 ```swift
@@ -74,9 +74,9 @@ import MariaDB
 import PerfectCRUD
 ```
 
-Perfect-MariaDB implements the Perfect-CRUD protocol via `MySQLDatabaseConfiguration` (see `Sources/MariaDB/MySQLCRUD.swift`), letting Perfect-CRUD's declarative model/query API target a MariaDB/MySQL server. See [Perfect-CRUD](../Perfect-CRUD) (a local sibling repo in this monorepo, not an external dependency) for the CRUD API itself.
+Perfect-MariaDB implements the Perfect-CRUD protocol via `MySQLDatabaseConfiguration` (see `Sources/MariaDB/MySQLCRUD.swift`), letting Perfect-CRUD's declarative model/query API target a MariaDB/MySQL server. See [Perfect-CRUD](https://github.com/PerfectlySoft/Perfect-CRUD) for the CRUD API itself.
 
-Note: the source files retain their original `MySQLCRUD.swift`/`MySQLStmt.swift` naming from this package's shared lineage with [Perfect-MySQL](../Perfect-MySQL) — MariaDB is wire-compatible with the MySQL client protocol, and the two packages are separate, independently-buildable connectors in this ecosystem.
+Note: the source files retain their original `MySQLCRUD.swift`/`MySQLStmt.swift` naming from this package's shared lineage with [Perfect-MySQL](https://github.com/PerfectlySoft/Perfect-MySQL) — MariaDB is wire-compatible with the MySQL client protocol, and the two packages are separate, independently-buildable connectors in this ecosystem.
 
 ## Testing
 
