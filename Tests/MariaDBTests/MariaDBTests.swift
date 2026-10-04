@@ -105,7 +105,7 @@ private func getTestDB() throws -> Database<DBConfiguration> {
     return try getDB(reset: false)
 }
 
-/// `MariaDBTests` and `DirectStatementTests` both drop and recreate the shared `test` database,
+/// The suites in this extension all drop and recreate the shared `test` database,
 /// so they must not run in parallel with each other. `.serialized` applies to nested suites too;
 /// on each suite alone it only orders that suite's own tests.
 @Suite(.serialized) struct LiveServerTests {}
@@ -320,8 +320,8 @@ struct MariaDBTests {
                 #expect(e[24] as? String == "1")
                 #expect(e[25] as? String == "2")
                 #expect(e[26] as? Int8 == 1)
-                #expect(e[27] as? String == "1\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0")
-                #expect(e[28] as? String == "1")
+                #expect(e[27] as? [UInt8] == [0x31] + [UInt8](repeating: 0, count: 19))
+                #expect(e[28] as? [UInt8] == [0x31])
             }
             #expect(ok, "\(stmt1.errorMessage())")
             #expect(rowCount == 2)
@@ -1144,6 +1144,71 @@ struct MariaDBTests {
         _ = stmt.results().forEachRow { row in value = row.first ?? nil }
         // MySQL returns BIGINT here, MariaDB a narrower integer; compare the value, not the type.
         #expect(value.map { "\($0)" } == "4", "\(String(describing: value))")
+    }
+}
+
+/// BINARY / VARBINARY columns report as (VAR_)STRING with the binary charset (63). They must come
+/// back as bytes, not as a String decoded from bytes that needn't be UTF-8.
+@Suite(.serialized) struct BinaryColumnTests {
+    struct BinaryRow: Codable, TableNameProvider {
+        static let tableName = "binary_cols"
+        let id: Int
+        let b: [UInt8]
+        let vb: Data
+        let vc: String
+        let u: UUID
+    }
+
+    struct BinaryAsText: Codable, TableNameProvider {
+        static let tableName = "binary_cols"
+        let id: Int
+        let vb: String
+    }
+
+    let uuid1 = UUID(uuidString: "07A1B2C3-D4E5-46F7-8899-AABBCCDDEEFF")!
+    let uuid2 = UUID(uuidString: "17A1B2C3-D4E5-46F7-8899-AABBCCDDEEFF")!
+
+    private func makeTable() throws -> Database<DBConfiguration> {
+        let db = try getDB()
+        try db.sql("CREATE TABLE binary_cols (id INT PRIMARY KEY, b BINARY(4), vb VARBINARY(8), vc VARCHAR(8), j JSON, u VARBINARY(36), cb VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)")
+        try db.sql("INSERT INTO binary_cols VALUES (1, X'FF00FE01', X'FF', 'abc', '{\"a\": 1}', '\(uuid1)', 'bin'), (2, 'ok', 'hi', 'x', NULL, '\(uuid2)', NULL)")
+        return db
+    }
+
+    @Test func statementReturnsBinaryColumnsAsBytes() throws {
+        guard mariaEnabled else { return }
+        _ = try makeTable()
+        let stmt = MySQLStmt(rawMySQL)
+        #expect(stmt.prepare(statement: "SELECT id, b, vb, vc, j, cb FROM binary_cols ORDER BY id"), "\(stmt.errorMessage())")
+        #expect(stmt.execute(), "\(stmt.errorMessage())")
+        var rows: [[Any?]] = []
+        #expect(stmt.results().forEachRow { rows.append($0) })
+        try #require(rows.count == 2)
+        #expect(rows[0][1] as? [UInt8] == [0xFF, 0x00, 0xFE, 0x01])
+        #expect(rows[0][2] as? [UInt8] == [0xFF])
+        #expect(rows[0][3] as? String == "abc")
+        // JSON reports the binary charset on MySQL (on MariaDB it's LONGTEXT); still text.
+        #expect(rows[0][4] is String)
+        // A binary *collation* is still text; only the binary charset means bytes.
+        #expect(rows[0][5] as? String == "bin")
+        // BINARY is right-padded with NULs.
+        #expect(rows[1][1] as? [UInt8] == [0x6F, 0x6B, 0x00, 0x00])
+        #expect(rows[1][2] as? [UInt8] == Array("hi".utf8))
+    }
+
+    @Test func crudDecodesBinaryColumns() throws {
+        guard mariaEnabled else { return }
+        let db = try makeTable()
+        let rows = try db.table(BinaryRow.self).order(by: \.id).select().map { $0 }
+        try #require(rows.count == 2)
+        #expect(rows[0].b == [0xFF, 0x00, 0xFE, 0x01])
+        #expect(rows[0].vb == Data([0xFF]))
+        #expect(rows[0].vc == "abc")
+        // Text-typed properties (UUID here) over a VARBINARY column still decode.
+        #expect(rows.map(\.u) == [uuid1, uuid2])
+        // A String property over a VARBINARY column still decodes text stored there.
+        let text = try db.table(BinaryAsText.self).where(\BinaryAsText.id == 2).first()
+        #expect(text?.vb == "hi")
     }
 }
 } // extension LiveServerTests

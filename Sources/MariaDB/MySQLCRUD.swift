@@ -29,6 +29,14 @@ class MySQLCRUDRowReader<K: CodingKey>: KeyedDecodingContainerProtocol, @uncheck
         guard let idx = columns[key.stringValue], idx >= 0, idx < row.count else { return nil }
         return row[idx]
     }
+    /// A text value; BINARY / VARBINARY / BLOB columns arrive as bytes and are read as UTF-8.
+    func text(_ val: Any?) -> String? {
+        switch val {
+        case let s as String: return s
+        case let bytes as [UInt8]: return String(decoding: bytes, as: UTF8.self)
+        default: return nil
+        }
+    }
     func contains(_ key: Key) -> Bool { return nil != columns[key.stringValue] }
     func decodeNil(forKey key: Key) throws -> Bool { return nil == column(key) }
     func decode(_ type: Bool.Type, forKey key: Key) throws -> Bool {
@@ -66,7 +74,9 @@ class MySQLCRUDRowReader<K: CodingKey>: KeyedDecodingContainerProtocol, @uncheck
     func decode(_ type: UInt64.Type, forKey key: Key) throws -> UInt64 { return (column(key) as? UInt64) ?? 0 }
     func decode(_ type: Float.Type, forKey key: Key) throws -> Float { return (column(key) as? Float) ?? 0 }
     func decode(_ type: Double.Type, forKey key: Key) throws -> Double { return (column(key) as? Double) ?? 0 }
-    func decode(_ type: String.Type, forKey key: Key) throws -> String { return (column(key) as? String) ?? "" }
+    func decode(_ type: String.Type, forKey key: Key) throws -> String {
+        return text(column(key)) ?? ""
+    }
     func decode<T>(_ type: T.Type, forKey key: Key) throws -> T where T: Decodable {
         guard let special = SpecialType(type) else {
             throw CRUDDecoderError("Unsupported type: \(type) for key: \(key.stringValue)")
@@ -83,22 +93,22 @@ class MySQLCRUDRowReader<K: CodingKey>: KeyedDecodingContainerProtocol, @uncheck
             let bytes: [UInt8] = (val as? [UInt8]) ?? []
             return Data(bytes) as! T
         case .uuid:
-            guard let str = val as? String, let uuid = UUID(uuidString: str) else {
+            guard let str = text(val), let uuid = UUID(uuidString: str) else {
                 throw CRUDDecoderError("Invalid UUID string \(String(describing: val)).")
             }
             return uuid as! T
         case .date:
-            guard let str = val as? String, let date = Date(fromMysqlFormatted: str) else {
+            guard let str = text(val), let date = Date(fromMysqlFormatted: str) else {
                 throw CRUDDecoderError("Invalid Date string \(String(describing: val)).")
             }
             return date as! T
         case .url:
-            guard let str = val as? String, let url = URL(string: str) else {
+            guard let str = text(val), let url = URL(string: str) else {
                 throw CRUDDecoderError("Invalid URL string \(String(describing: val)).")
             }
             return url as! T
         case .codable:
-            guard let data = (val as? String)?.data(using: .utf8) else {
+            guard let data = text(val)?.data(using: .utf8) else {
                 throw CRUDDecoderError("Unsupported type: \(type) for key: \(key.stringValue)")
             }
             return try JSONDecoder().decode(type, from: data)
