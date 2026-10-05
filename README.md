@@ -81,6 +81,27 @@ Perfect-MariaDB implements the Perfect-CRUD protocol via `MySQLDatabaseConfigura
 
 Note: the source files retain their original `MySQLCRUD.swift`/`MySQLStmt.swift` naming from this package's shared lineage with [Perfect-MySQL](https://github.com/PerfectlySoft/Perfect-MySQL) — MariaDB is wire-compatible with the MySQL client protocol, and the two packages are separate, independently-buildable connectors in this ecosystem.
 
+### TLS
+
+Set `MYSQL_OPT_SSL_MODE` before connecting, using MySQL's `SSL_MODE_*` values: 1 = DISABLED, 2 = PREFERRED,
+3 = REQUIRED, 4 = VERIFY_CA, 5 = VERIFY_IDENTITY. MariaDB Connector/C has no such option, so the modes are mapped onto
+`MYSQL_OPT_SSL_ENFORCE` and `MYSQL_OPT_SSL_VERIFY_SERVER_CERT`:
+
+```swift
+let mysql = MySQL()
+mysql.setOption(.MYSQL_OPT_SSL_CA, "/path/to/ca.pem")
+guard mysql.setOption(.MYSQL_OPT_SSL_MODE, 5) else { fatalError("SSL mode not supported") }
+```
+
+- **REQUIRED** is checked only after authenticating: Connector/C doesn't refuse a server without TLS, so `connect()`
+  closes the plaintext connection and fails with error 2026 afterwards. Someone able to tamper with the connection can
+  capture the authentication exchange (or the password, if the server asks for `mysql_clear_password`). Use
+  VERIFY_IDENTITY with `MYSQL_OPT_SSL_CA`, which fails before authenticating. REQUIRED also turns off
+  `MYSQL_OPT_RECONNECT`, since a reconnect could fall back to plaintext.
+- **VERIFY_CA** also checks the host name. Connector/C 3.4 checks neither the host name nor, without
+  `MYSQL_OPT_SSL_CA`, the CA on local (loopback or socket) connections.
+- **DISABLED** still uses TLS if any `MYSQL_OPT_SSL_*` file or cipher option is set.
+
 ## Testing
 
 A `MariaDBTests` target and a `docker-compose.yml` (spins up a local MariaDB container) are included for running the test suite against a real server.

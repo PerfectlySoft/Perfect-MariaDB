@@ -40,6 +40,7 @@ public enum MySQLOpt {
         MYSQL_REPORT_DATA_TRUNCATION, MYSQL_OPT_RECONNECT,
         MYSQL_OPT_SSL_VERIFY_SERVER_CERT, MYSQL_PLUGIN_DIR, MYSQL_DEFAULT_AUTH,
         MYSQL_OPT_BIND,
+        MYSQL_OPT_SSL_MODE,
         MYSQL_OPT_SSL_KEY, MYSQL_OPT_SSL_CERT,
         MYSQL_OPT_SSL_CA, MYSQL_OPT_SSL_CAPATH, MYSQL_OPT_SSL_CIPHER,
         MYSQL_OPT_SSL_CRL, MYSQL_OPT_SSL_CRLPATH,
@@ -52,6 +53,15 @@ public enum MySQLOpt {
 public final class MySQL: @unchecked Sendable {
 
     var ptr: UnsafeMutablePointer<MYSQL>?
+    /// Set when MYSQL_OPT_SSL_MODE asks for TLS, which libmariadb doesn't enforce itself.
+    var sslModeRequiresTLS = false
+    /// An error from connect() that libmariadb doesn't know about.
+    var connectError: String?
+    /// The options set so far, to set again on a fresh handle after connect() refuses a connection.
+    var appliedOptions: [(MySQLOpt, OptionValue)] = []
+    enum OptionValue {
+        case none, bool(Bool), int(UInt32), string(String)
+    }
 
     public static func clientInfo() -> String {
         return String(validatingCString: mysql_get_client_info()) ?? ""
@@ -84,10 +94,17 @@ public final class MySQL: @unchecked Sendable {
     }
 
     public func errorCode() -> UInt32 {
-        return mysql_errno(self.ptr!)
+        let code = mysql_errno(self.ptr!)
+        if code == 0 && self.connectError != nil {
+            return 2026 // CR_SSL_CONNECTION_ERROR
+        }
+        return code
     }
 
     public func errorMessage() -> String {
+        if mysql_errno(self.ptr!) == 0, let connectError = self.connectError {
+            return connectError
+        }
         return String(validatingCString: mysql_error(self.ptr!)) ?? ""
     }
 
@@ -134,8 +151,30 @@ public final class MySQL: @unchecked Sendable {
             self.cleanConvertedString(dbOrBlank)
             self.cleanConvertedString(socketOrBlank)
         }
-        let check = mysql_real_connect(self.ptr!, hostOrBlank.0!, userOrBlank.0!, passwordOrBlank.0!, dbOrBlank.0!, port, socketOrBlank.0!, flag)
-        return check != nil && check == self.ptr
+        self.connectError = nil
+        if self.sslModeRequiresTLS {
+            // libmariadb's automatic reconnect would skip the check below.
+            var off = my_bool(0)
+            mysql_options(self.ptr!, MYSQL_OPT_RECONNECT, &off)
+        }
+        // CLIENT_REMEMBER_OPTIONS: libmariadb otherwise resets the options when a connection fails,
+        // so a retry would quietly drop MYSQL_OPT_SSL_MODE (and everything else).
+        let check = mysql_real_connect(self.ptr!, hostOrBlank.0!, userOrBlank.0!, passwordOrBlank.0!, dbOrBlank.0!, port, socketOrBlank.0!, flag | (1 << 31))
+        guard check != nil && check == self.ptr else {
+            return false
+        }
+        // libmariadb quietly falls back to plaintext when the server has no TLS. Refuse that
+        // connection, and start a fresh handle with the same options so connect() can be retried.
+        if self.sslModeRequiresTLS && mysql_get_ssl_cipher(self.ptr!) == nil {
+            mysql_close(self.ptr!)
+            self.ptr = mysql_init(nil)
+            for (option, value) in self.appliedOptions {
+                self.apply(option, value)
+            }
+            self.connectError = "SSL connection error: SSL is required, but the server does not support it"
+            return false
+        }
+        return true
     }
 
     public func selectDatabase(named namd: String) -> Bool {
@@ -230,6 +269,9 @@ public final class MySQL: @unchecked Sendable {
         case .MYSQL_PLUGIN_DIR: return MYSQL_PLUGIN_DIR
         case .MYSQL_DEFAULT_AUTH: return MYSQL_DEFAULT_AUTH
         case .MYSQL_OPT_BIND: return MYSQL_OPT_BIND
+        // libmariadb has no such option; setOption(_:_: Int) maps it. Anywhere else, use a value
+        // libmariadb rejects.
+        case .MYSQL_OPT_SSL_MODE: return mysql_option(rawValue: 0x7FFF)
         case .MYSQL_OPT_SSL_KEY: return MYSQL_OPT_SSL_KEY
         case .MYSQL_OPT_SSL_CERT: return MYSQL_OPT_SSL_CERT
         case .MYSQL_OPT_SSL_CA: return MYSQL_OPT_SSL_CA
@@ -247,28 +289,66 @@ public final class MySQL: @unchecked Sendable {
 
     @discardableResult
     public func setOption(_ option: MySQLOpt) -> Bool {
-        return mysql_options(self.ptr!, exposedOptionToMySQLOption(option), nil) == 0
+        return self.record(option, .none)
     }
 
     @discardableResult
     public func setOption(_ option: MySQLOpt, _ b: Bool) -> Bool {
-        var myB = my_bool(b ? 1 : 0)
-        return mysql_options(self.ptr!, exposedOptionToMySQLOption(option), &myB) == 0
+        return self.record(option, .bool(b))
     }
 
+    /// MYSQL_OPT_SSL_MODE takes one of MySQL's SSL_MODE_* values (1 = DISABLED ... 5 = VERIFY_IDENTITY),
+    /// mapped onto MYSQL_OPT_SSL_ENFORCE and MYSQL_OPT_SSL_VERIFY_SERVER_CERT:
+    /// - REQUIRED: libmariadb doesn't refuse a server without TLS, so connect() does, but only after
+    ///   authenticating in plaintext. Someone able to tamper with the connection can capture the
+    ///   authentication exchange (or the password, if the server asks for mysql_clear_password).
+    ///   Use VERIFY_IDENTITY, which fails before authenticating. REQUIRED also turns off
+    ///   MYSQL_OPT_RECONNECT, since a reconnect could fall back to plaintext.
+    /// - VERIFY_CA also checks the server's host name, except that Connector/C 3.4 checks neither the
+    ///   host name nor (without MYSQL_OPT_SSL_CA) the CA on local connections.
+    /// - DISABLED still uses TLS if MYSQL_OPT_SSL_CA, _CERT, _KEY, _CAPATH or _CIPHER is set.
     @discardableResult
     public func setOption(_ option: MySQLOpt, _ i: Int) -> Bool {
-        var myI = UInt32(i)
-        return mysql_options(self.ptr!, exposedOptionToMySQLOption(option), &myI) == 0
+        guard let myI = UInt32(exactly: i) else {
+            return false
+        }
+        return self.record(option, .int(myI))
     }
 
     @discardableResult
     public func setOption(_ option: MySQLOpt, _ s: String) -> Bool {
-        var b = false
-        s.withCString { p in
-            b = mysql_options(self.ptr!, exposedOptionToMySQLOption(option), p) == 0
+        return self.record(option, .string(s))
+    }
+
+    private func record(_ option: MySQLOpt, _ value: OptionValue) -> Bool {
+        guard self.apply(option, value) else {
+            return false
         }
-        return b
+        self.appliedOptions.append((option, value))
+        return true
+    }
+
+    @discardableResult
+    private func apply(_ option: MySQLOpt, _ value: OptionValue) -> Bool {
+        let mysqlOption = exposedOptionToMySQLOption(option)
+        switch value {
+        case .none:
+            return mysql_options(self.ptr!, mysqlOption, nil) == 0
+        case .bool(let b):
+            var myB = my_bool(b ? 1 : 0)
+            return mysql_options(self.ptr!, mysqlOption, &myB) == 0
+        case .int(var myI):
+            if option == .MYSQL_OPT_SSL_MODE {
+                guard perfect_mariadb_set_ssl_mode(self.ptr!, myI) == 0 else {
+                    return false
+                }
+                self.sslModeRequiresTLS = myI >= SSL_MODE_REQUIRED.rawValue
+                return true
+            }
+            return mysql_options(self.ptr!, mysqlOption, &myI) == 0
+        case .string(let s):
+            return s.withCString { mysql_options(self.ptr!, mysqlOption, $0) == 0 }
+        }
     }
 
     public final class Results: IteratorProtocol, @unchecked Sendable {
