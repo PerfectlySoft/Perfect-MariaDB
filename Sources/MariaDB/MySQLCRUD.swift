@@ -236,7 +236,10 @@ class MySQLGenDelegate: SQLGenDelegate, @unchecked Sendable {
                 "ALTER TABLE \(try quote(identifier: forTable.tableName)) DROP COLUMN \(try quote(identifier: $0))"
             }
             sub += try addColumns.compactMap { newColumnMap[$0] }.map {
-                "ALTER TABLE \(try quote(identifier: forTable.tableName)) ADD COLUMN \(try getColumnDefinition($0))"
+                // A new @ForeignKey column gets its constraint in the same statement.
+                extraCreate = []
+                let nameType = try getColumnDefinition($0)
+                return "ALTER TABLE \(try quote(identifier: forTable.tableName)) ADD COLUMN \(nameType)\(extraCreate.map { ", ADD \($0)" }.joined())"
             }
             return sub
         }
