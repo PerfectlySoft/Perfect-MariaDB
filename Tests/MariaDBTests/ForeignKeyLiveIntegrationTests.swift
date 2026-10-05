@@ -5,14 +5,11 @@ import PerfectCRUD
 
 // MARK: - ADR-0001 Phase 4: live FOREIGN KEY behavior (MariaDB connector)
 //
-// Mirrors Perfect-MySQL's ForeignKeyLiveIntegrationTests.swift. This
-// machine has no separate MariaDB server running (only a real mysqld) --
-// libmariadb is wire-protocol-compatible with a real MySQL server, so this
-// still exercises the actual connector code path (DDL generation, bind,
-// execute, row decode) against a real server, just not against MariaDB's
-// own server binary specifically. Env-var driven (not the older hardcoded
-// root/123 in MariaDBTests.swift, which doesn't match this server) so it
-// can point at whatever's actually running.
+// Mirrors Perfect-MySQL's ForeignKeyLiveIntegrationTests.swift. libmariadb is
+// wire-protocol-compatible with MySQL, so these run against a MariaDB or a
+// MySQL test server. Opt in with MARIA_FK_LIVE_TESTS=1 on top of the usual
+// MARIA_TESTS=1 and MARIA_TEST_PORT (see MariaTestEnvironment.swift). Unlike
+// the other live tests, MARIA_TEST_PASSWORD defaults to empty here.
 
 private struct FKLiveParent: Codable {
 	var id: Int
@@ -27,7 +24,7 @@ private struct FKLiveChild: Codable {
 
 private struct FKFixtureConfig {
 	let host: String
-	let port: Int?
+	let port: Int
 	let adminDatabase: String
 	let username: String
 	let password: String
@@ -36,11 +33,11 @@ private struct FKFixtureConfig {
 	static func fromEnvironment(schemaSuffix: String = UUID().uuidString.replacingOccurrences(of: "-", with: "_")) -> Self {
 		let env = ProcessInfo.processInfo.environment
 		return FKFixtureConfig(
-			host: env["MARIA_TEST_HOST"] ?? "127.0.0.1",
-			port: env["MARIA_TEST_PORT"].flatMap(Int.init),
+			host: MariaTestEnvironment.host,
+			port: MariaTestEnvironment.port,
 			adminDatabase: env["MARIA_TEST_ADMIN_DATABASE"] ?? "mysql",
-			username: env["MARIA_TEST_USER"] ?? "root",
-			password: env["MARIA_TEST_PASSWORD"] ?? "",
+			username: MariaTestEnvironment.user,
+			password: MariaTestEnvironment.password(default: ""),
 			schema: "perfect_maria_fixture_\(schemaSuffix)"
 		)
 	}
@@ -82,7 +79,7 @@ private final class ForeignKeyFixtureDatabase {
 
 struct ForeignKeyLiveIntegrationTests {
 
-	@Test(.enabled(if: ProcessInfo.processInfo.environment["MARIA_FK_LIVE_TESTS"] == "1"))
+	@Test(.mariaLive, .enabled(if: ProcessInfo.processInfo.environment["MARIA_FK_LIVE_TESTS"] == "1", "set MARIA_FK_LIVE_TESTS=1 too"))
 	func onDeleteCascadeActuallyRemovesTheChildRow() throws {
 		let fixture = try ForeignKeyFixtureDatabase()
 		let db = fixture.database
@@ -99,7 +96,7 @@ struct ForeignKeyLiveIntegrationTests {
 		#expect(afterDelete.isEmpty)
 	}
 
-	@Test(.enabled(if: ProcessInfo.processInfo.environment["MARIA_FK_LIVE_TESTS"] == "1"))
+	@Test(.mariaLive, .enabled(if: ProcessInfo.processInfo.environment["MARIA_FK_LIVE_TESTS"] == "1", "set MARIA_FK_LIVE_TESTS=1 too"))
 	func insertingAChildWithAnUnknownParentIsRejected() throws {
 		let fixture = try ForeignKeyFixtureDatabase()
 		let db = fixture.database

@@ -3,26 +3,23 @@ import Testing
 @testable import MariaDB
 import PerfectCRUD
 
-// Run with: MARIA_TESTS=1 [MARIA_TEST_HOST=… MARIA_TEST_PORT=… MARIA_TEST_USER=… MARIA_TEST_PASSWORD=…] swift test
+// Run with: MARIA_TESTS=1 MARIA_TEST_PORT=… [MARIA_TEST_HOST=… MARIA_TEST_USER=… MARIA_TEST_PASSWORD=…] swift test
 
-// Overridable like the foreign-key tests' MARIA_TEST_* settings.
-private let testEnv = ProcessInfo.processInfo.environment
-private let testHost = testEnv["MARIA_TEST_HOST"] ?? "127.0.0.1"
-private let testPort = testEnv["MARIA_TEST_PORT"].flatMap(Int.init)
-private let testUser = testEnv["MARIA_TEST_USER"] ?? "root"
-private let testPassword = testEnv["MARIA_TEST_PASSWORD"] ?? "123"
+// Settings and gating: MariaTestEnvironment.swift. Live tests are skipped unless the port is set.
+private let testHost = MariaTestEnvironment.host
+private var testPort: Int { MariaTestEnvironment.port }
+private let testUser = MariaTestEnvironment.user
+private let testPassword = MariaTestEnvironment.password
 private let testSchema = "test"
 private let testDB = "test"
 private let testDBRowCount = 5
 private typealias DBConfiguration = MySQLDatabaseConfiguration
 
-private var mariaEnabled: Bool { ProcessInfo.processInfo.environment["MARIA_TESTS"] == "1" }
-
 private func makeMySQL() -> MySQL {
     let m = MySQL()
     _ = m.setOption(.MYSQL_OPT_CONNECT_TIMEOUT, 5)
     _ = m.setOption(.MYSQL_SET_CHARSET_NAME, "utf8mb4")
-    _ = m.connect(host: testHost, user: testUser, password: testPassword, port: UInt32(testPort ?? 0))
+    _ = m.connect(host: testHost, user: testUser, password: testPassword, port: UInt32(testPort))
     if m.selectDatabase(named: testSchema) == false {
         _ = m.query(statement: "CREATE SCHEMA `\(testSchema)` DEFAULT CHARACTER SET utf8mb4")
         _ = m.selectDatabase(named: testSchema)
@@ -34,7 +31,7 @@ private var rawMySQL: MySQL {
     let mysql = MySQL()
     _ = mysql.setOption(.MYSQL_OPT_CONNECT_TIMEOUT, 5)
     _ = mysql.setOption(.MYSQL_SET_CHARSET_NAME, "utf8mb4")
-    _ = mysql.connect(host: testHost, user: testUser, password: testPassword, db: "mysql", port: UInt32(testPort ?? 0))
+    _ = mysql.connect(host: testHost, user: testUser, password: testPassword, db: "mysql", port: UInt32(testPort))
     _ = mysql.query(statement: "CREATE DATABASE IF NOT EXISTS \(testDB) DEFAULT CHARACTER SET utf8mb4")
     _ = mysql.selectDatabase(named: testDB)
     return mysql
@@ -113,13 +110,12 @@ private func getTestDB() throws -> Database<DBConfiguration> {
 extension LiveServerTests {
 @Suite(.serialized)
 struct MariaDBTests {
-    @Test func connect() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func connect() throws {
         let mysql = MySQL()
         #expect(mysql.setOption(.MYSQL_OPT_RECONNECT, true))
         #expect(mysql.setOption(.MYSQL_OPT_LOCAL_INFILE))
         #expect(mysql.setOption(.MYSQL_OPT_CONNECT_TIMEOUT, 5))
-        let res = mysql.connect(host: testHost, user: testUser, password: testPassword, port: UInt32(testPort ?? 0))
+        let res = mysql.connect(host: testHost, user: testUser, password: testPassword, port: UInt32(testPort))
         #expect(res)
         let sres = mysql.selectDatabase(named: testSchema)
             || mysql.query(statement: "CREATE SCHEMA `\(testSchema)` DEFAULT CHARACTER SET utf8mb4")
@@ -127,38 +123,33 @@ struct MariaDBTests {
         mysql.close()
     }
 
-    @Test func listDbs1() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func listDbs1() throws {
         let mysql = makeMySQL()
         let list = mysql.listDatabases()
         #expect(list.count > 0)
     }
 
-    @Test func listDbs2() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func listDbs2() throws {
         let mysql = makeMySQL()
         let list = mysql.listDatabases(wildcard: "information_%")
         #expect(list.count > 0)
     }
 
-    @Test func listTables1() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func listTables1() throws {
         let mysql = makeMySQL()
         #expect(mysql.selectDatabase(named: "information_schema"))
         let list = mysql.listTables()
         #expect(list.count > 0)
     }
 
-    @Test func listTables2() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func listTables2() throws {
         let mysql = makeMySQL()
         #expect(mysql.selectDatabase(named: "information_schema"))
         let list = mysql.listTables(wildcard: "INNODB_%")
         #expect(list.count > 0)
     }
 
-    @Test func query1() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func query1() throws {
         let mysql = makeMySQL()
         #expect(mysql.query(statement: "DROP TABLE IF EXISTS test"))
         #expect(mysql.query(statement: "CREATE TABLE test (id INT, d DOUBLE, s VARCHAR(1024))"), "\(mysql.errorMessage())")
@@ -178,8 +169,7 @@ struct MariaDBTests {
         #expect(mysql.listTables(wildcard: "test").count == 0)
     }
 
-    @Test func query2() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func query2() throws {
         let mysql = makeMySQL()
         #expect(mysql.query(statement: "DROP TABLE IF EXISTS test"))
         #expect(mysql.query(statement: "CREATE TABLE test (id INT, d DOUBLE, s VARCHAR(1024))"), "\(mysql.errorMessage())")
@@ -197,8 +187,7 @@ struct MariaDBTests {
         #expect(mysql.listTables(wildcard: "test").count == 0)
     }
 
-    @Test func insertNull() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func insertNull() throws {
         let mysql = makeMySQL()
         #expect(mysql.query(statement: "DROP TABLE IF EXISTS test"))
         #expect(mysql.query(statement: "CREATE TABLE test (id INT, d DOUBLE, s VARCHAR(1024))"), "\(mysql.errorMessage())")
@@ -218,8 +207,7 @@ struct MariaDBTests {
         #expect(mysql.listTables(wildcard: "test").count == 0)
     }
 
-    @Test func queryStmt1() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func queryStmt1() throws {
         let mysql = makeMySQL()
         #expect(mysql.query(statement: "DROP TABLE IF EXISTS all_data_types"))
         let qres = mysql.query(statement: "CREATE TABLE `all_data_types` (`varchar` VARCHAR( 20 ),\n`tinyint` TINYINT,\n`text` TEXT,\n`date` DATE,\n`smallint` SMALLINT,\n`mediumint` MEDIUMINT,\n`int` INT,\n`bigint` BIGINT,\n`float` FLOAT( 10, 2 ),\n`double` DOUBLE,\n`decimal` DECIMAL( 10, 2 ),\n`datetime` DATETIME,\n`timestamp` TIMESTAMP,\n`time` TIME,\n`year` YEAR,\n`char` CHAR( 10 ),\n`tinyblob` TINYBLOB,\n`tinytext` TINYTEXT,\n`blob` BLOB,\n`mediumblob` MEDIUMBLOB,\n`mediumtext` MEDIUMTEXT,\n`longblob` LONGBLOB,\n`longtext` LONGTEXT,\n`enum` ENUM( '1', '2', '3' ),\n`set` SET( '1', '2', '3' ),\n`bool` BOOL,\n`binary` BINARY( 20 ),\n`varbinary` VARBINARY( 20 ) ) ENGINE = MYISAM")
@@ -248,8 +236,7 @@ struct MariaDBTests {
         }
     }
 
-    @Test func queryStmt2() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func queryStmt2() throws {
         let mysql = makeMySQL()
         #expect(mysql.query(statement: "DROP TABLE IF EXISTS all_data_types"))
         let qres = mysql.query(statement: "CREATE TABLE `all_data_types` (`varchar` VARCHAR( 20 ),\n`tinyint` TINYINT,\n`text` TEXT,\n`date` DATE,\n`smallint` SMALLINT,\n`mediumint` MEDIUMINT,\n`int` INT,\n`bigint` BIGINT,\n`ubigint` BIGINT UNSIGNED,\n`float` FLOAT( 10, 2 ),\n`double` DOUBLE,\n`decimal` DECIMAL( 10, 2 ),\n`datetime` DATETIME,\n`timestamp` TIMESTAMP,\n`time` TIME,\n`year` YEAR,\n`char` CHAR( 10 ),\n`tinyblob` TINYBLOB,\n`tinytext` TINYTEXT,\n`blob` BLOB,\n`mediumblob` MEDIUMBLOB,\n`mediumtext` MEDIUMTEXT,\n`longblob` LONGBLOB,\n`longtext` LONGTEXT,\n`enum` ENUM( '1', '2', '3' ),\n`set` SET( '1', '2', '3' ),\n`bool` BOOL,\n`binary` BINARY( 20 ),\n`varbinary` VARBINARY( 20 ) ) ENGINE = MYISAM")
@@ -324,14 +311,12 @@ struct MariaDBTests {
         }
     }
 
-    @Test func serverVersion() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func serverVersion() throws {
         let mysql = makeMySQL()
         #expect(mysql.serverVersion() >= 50627)
     }
 
-    @Test func queryInt() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func queryInt() throws {
         let mysql = makeMySQL()
         #expect(mysql.query(statement: "DROP TABLE IF EXISTS int_test"), "\(mysql.errorMessage())")
         #expect(mysql.query(statement: "CREATE TABLE int_test (a TINYINT, au TINYINT UNSIGNED, b SMALLINT, bu SMALLINT UNSIGNED, c MEDIUMINT, cu MEDIUMINT UNSIGNED, d INT, du INT UNSIGNED, e BIGINT, eu BIGINT UNSIGNED)"), "\(mysql.errorMessage())")
@@ -349,8 +334,7 @@ struct MariaDBTests {
         }
     }
 
-    @Test func queryIntMin() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func queryIntMin() throws {
         let mysql = makeMySQL()
         #expect(mysql.query(statement: "DROP TABLE IF EXISTS int_test"), "\(mysql.errorMessage())")
         #expect(mysql.query(statement: "CREATE TABLE int_test (a TINYINT, au TINYINT UNSIGNED, b SMALLINT, bu SMALLINT UNSIGNED, c MEDIUMINT, cu MEDIUMINT UNSIGNED, d INT, du INT UNSIGNED, e BIGINT, eu BIGINT UNSIGNED)"), "\(mysql.errorMessage())")
@@ -368,13 +352,11 @@ struct MariaDBTests {
         }
     }
 
-    @Test func procedure() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func procedure() throws {
         // procedure tests require stored procedure support — skipped
     }
 
-    @Test func queryIntMax() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func queryIntMax() throws {
         let mysql = makeMySQL()
         #expect(mysql.query(statement: "DROP TABLE IF EXISTS int_test"), "\(mysql.errorMessage())")
         #expect(mysql.query(statement: "CREATE TABLE int_test (a TINYINT, au TINYINT UNSIGNED, b SMALLINT, bu SMALLINT UNSIGNED, c MEDIUMINT, cu MEDIUMINT UNSIGNED, d INT, du INT UNSIGNED, e BIGINT, eu BIGINT UNSIGNED)"), "\(mysql.errorMessage())")
@@ -392,8 +374,7 @@ struct MariaDBTests {
         }
     }
 
-    @Test func queryDecimal() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func queryDecimal() throws {
         let mysql = makeMySQL()
         #expect(mysql.query(statement: "DROP TABLE IF EXISTS decimal_test"), "\(mysql.errorMessage())")
         #expect(mysql.query(statement: "CREATE TABLE decimal_test (f FLOAT, fm FLOAT, d DOUBLE, dm DOUBLE, de DECIMAL(2,1), dem DECIMAL(2,1))"), "\(mysql.errorMessage())")
@@ -409,8 +390,7 @@ struct MariaDBTests {
         }
     }
 
-    @Test func stmtInt() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func stmtInt() throws {
         let mysql = makeMySQL()
         #expect(mysql.query(statement: "DROP TABLE IF EXISTS int_test"), "\(mysql.errorMessage())")
         #expect(mysql.query(statement: "CREATE TABLE int_test (a TINYINT, au TINYINT UNSIGNED, b SMALLINT, bu SMALLINT UNSIGNED, c MEDIUMINT, cu MEDIUMINT UNSIGNED, d INT, du INT UNSIGNED, e BIGINT, eu BIGINT UNSIGNED)"), "\(mysql.errorMessage())")
@@ -435,8 +415,7 @@ struct MariaDBTests {
         #expect(ok1)
     }
 
-    @Test func stmtIntMin() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func stmtIntMin() throws {
         let mysql = makeMySQL()
         #expect(mysql.query(statement: "DROP TABLE IF EXISTS int_test"), "\(mysql.errorMessage())")
         #expect(mysql.query(statement: "CREATE TABLE int_test (a TINYINT, au TINYINT UNSIGNED, b SMALLINT, bu SMALLINT UNSIGNED, c MEDIUMINT, cu MEDIUMINT UNSIGNED, d INT, du INT UNSIGNED, e BIGINT, eu BIGINT UNSIGNED)"), "\(mysql.errorMessage())")
@@ -460,8 +439,7 @@ struct MariaDBTests {
         #expect(ok2)
     }
 
-    @Test func stmtIntMax() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func stmtIntMax() throws {
         let mysql = makeMySQL()
         #expect(mysql.query(statement: "DROP TABLE IF EXISTS int_test"), "\(mysql.errorMessage())")
         #expect(mysql.query(statement: "CREATE TABLE int_test (a TINYINT, au TINYINT UNSIGNED, b SMALLINT, bu SMALLINT UNSIGNED, c MEDIUMINT, cu MEDIUMINT UNSIGNED, d INT, du INT UNSIGNED, e BIGINT, eu BIGINT UNSIGNED)"), "\(mysql.errorMessage())")
@@ -485,8 +463,7 @@ struct MariaDBTests {
         #expect(ok3)
     }
 
-    @Test func stmtDecimal() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func stmtDecimal() throws {
         let mysql = makeMySQL()
         #expect(mysql.query(statement: "DROP TABLE IF EXISTS decimal_test"), "\(mysql.errorMessage())")
         #expect(mysql.query(statement: "CREATE TABLE decimal_test (f FLOAT, fm FLOAT, d DOUBLE, dm DOUBLE, de DECIMAL(2,1), dem DECIMAL(2,1))"), "\(mysql.errorMessage())")
@@ -509,8 +486,7 @@ struct MariaDBTests {
 
     // CRUD tests
 
-    @Test func create1() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func create1() throws {
         let db = try getDB()
         try db.create(TestTable1.self, policy: .dropTable)
         do { let t2 = db.table(TestTable2.self); try t2.index(\.parentId) }
@@ -547,8 +523,7 @@ struct MariaDBTests {
         #expect(try j2.select().map { $0 }.count == 0)
     }
 
-    @Test func create2() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func create2() throws {
         let db = try getTestDB()
         try db.create(TestTable1.self, primaryKey: \.id, policy: .dropTable)
         do { let t2 = db.table(TestTable2.self); try t2.index(\.parentId, \.date) }
@@ -564,8 +539,7 @@ struct MariaDBTests {
         #expect(j2.map { $0 }.count == 0)
     }
 
-    @Test func create3() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func create3() throws {
         struct FakeTestTable1: Codable, TableNameProvider {
             enum CodingKeys: String, CodingKey { case id, name, double = "doub", double2 = "doub2", blob, subTables }
             static let tableName = "test_table_1"
@@ -582,24 +556,21 @@ struct MariaDBTests {
         #expect(j2.map { $0 }[0].id == 2000)
     }
 
-    @Test func selectAll() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func selectAll() throws {
         let db = try getTestDB()
         for row in try db.table(TestTable1.self).select() {
             #expect(row.subTables == nil)
         }
     }
 
-    @Test func selectIn() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func selectIn() throws {
         let db = try getTestDB()
         let table = db.table(TestTable1.self)
         #expect(try table.where(\TestTable1.id ~ [2, 4]).count() == 2)
         #expect(try table.where(\TestTable1.id !~ [2, 4]).count() == 3)
     }
 
-    @Test func selectLikeString() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func selectLikeString() throws {
         let db = try getTestDB()
         let table = db.table(TestTable2.self)
         #expect(try table.where(\TestTable2.name %=% "me").count() == 25)
@@ -610,8 +581,7 @@ struct MariaDBTests {
         #expect(try table.where(\TestTable2.name %!= "me").count() == 10)
     }
 
-    @Test func selectJoin() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func selectJoin() throws {
         let db = try getTestDB()
         let j2 = try db.table(TestTable1.self)
             .order(by: \TestTable1.name)
@@ -625,8 +595,7 @@ struct MariaDBTests {
         j2a.forEach { row in #expect(!(row.subTables?.isEmpty ?? true)) }
     }
 
-    @Test func insert1() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func insert1() throws {
         let db = try getTestDB()
         let t1 = db.table(TestTable1.self)
         let newOne = TestTable1(id: 2000, name: "New ` One", integer: 40)
@@ -638,8 +607,7 @@ struct MariaDBTests {
         #expect(j2[0].name == "New ` One")
     }
 
-    @Test func insert2() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func insert2() throws {
         let db = try getTestDB()
         let t1 = db.table(TestTable1.self)
         let newOne = TestTable1(id: 2000, name: "New One", integer: 40)
@@ -651,8 +619,7 @@ struct MariaDBTests {
         #expect(j2[0].integer == nil)
     }
 
-    @Test func insert3() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func insert3() throws {
         let db = try getTestDB()
         let t1 = db.table(TestTable1.self)
         let newOne = TestTable1(id: 2000, name: "New One", integer: 40)
@@ -666,8 +633,7 @@ struct MariaDBTests {
         #expect(j2[0].name == nil)
     }
 
-    @Test func update() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func update() throws {
         let db = try getTestDB()
         let newOne = TestTable1(id: 2000, name: "New One", integer: 40)
         let newId: Int = try db.transaction {
@@ -683,8 +649,7 @@ struct MariaDBTests {
         #expect(j2[0].integer == 40)
     }
 
-    @Test func delete() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func delete() throws {
         let db = try getTestDB()
         let t1 = db.table(TestTable1.self)
         let newOne = TestTable1(id: 2000, name: "New One", integer: 40)
@@ -695,30 +660,26 @@ struct MariaDBTests {
         #expect(try query.select().map { $0 }.count == 0)
     }
 
-    @Test func selectLimit() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func selectLimit() throws {
         let db = try getTestDB()
         #expect(try db.table(TestTable1.self).limit(3, skip: 2).count() == 3)
     }
 
-    @Test func selectLimitWhere() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func selectLimitWhere() throws {
         let db = try getTestDB()
         let j2 = db.table(TestTable1.self).limit(3).where(\TestTable1.id > 3)
         #expect(try j2.count() == 2)
         #expect(try j2.select().map { $0 }.count == 2)
     }
 
-    @Test func selectOrderLimitWhere() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func selectOrderLimitWhere() throws {
         let db = try getTestDB()
         let j2 = db.table(TestTable1.self).order(by: \TestTable1.id).limit(3).where(\TestTable1.id > 3)
         #expect(try j2.count() == 2)
         #expect(try j2.select().map { $0 }.count == 2)
     }
 
-    @Test func selectWhereNULL() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func selectWhereNULL() throws {
         let db = try getTestDB()
         let t1 = db.table(TestTable1.self)
         #expect(try t1.where(\TestTable1.blob == nil).count() > 0)
@@ -726,8 +687,7 @@ struct MariaDBTests {
         CRUDLogging.flush()
     }
 
-    @Test func personThing() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func personThing() throws {
         struct PhoneNumber: Codable { let personId: UUID; let planetCode: Int; let number: String }
         struct Person: Codable { let id: UUID; let firstName: String; let lastName: String; let phoneNumbers: [PhoneNumber]? }
         let db = try getTestDB()
@@ -754,8 +714,7 @@ struct MariaDBTests {
         CRUDLogging.flush()
     }
 
-    @Test func standardJoin() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func standardJoin() throws {
         struct Parent: Codable { let id: Int; let children: [Child]?; init(id i: Int) { id = i; children = nil } }
         struct Child: Codable { let id: Int; let parentId: Int }
         let db = try getTestDB()
@@ -771,8 +730,7 @@ struct MariaDBTests {
         CRUDLogging.flush()
     }
 
-    @Test func junctionJoin() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func junctionJoin() throws {
         struct Student: Codable { let id: Int; let classes: [Class]?; init(id i: Int) { id = i; classes = nil } }
         struct Class: Codable { let id: Int; let students: [Student]?; init(id i: Int) { id = i; students = nil } }
         struct StudentClasses: Codable { let studentId: Int; let classId: Int }
@@ -795,8 +753,7 @@ struct MariaDBTests {
         CRUDLogging.flush()
     }
 
-    @Test func selfJoin() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func selfJoin() throws {
         struct Me: Codable { let id: Int; let parentId: Int; let mes: [Me]?; init(id i: Int, parentId p: Int) { id = i; parentId = p; mes = nil } }
         let db = try getTestDB()
         _ = try db.transaction {
@@ -808,8 +765,7 @@ struct MariaDBTests {
         #expect(mes.count == 4)
     }
 
-    @Test func selfJunctionJoin() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func selfJunctionJoin() throws {
         struct Me: Codable { let id: Int; let us: [Me]?; init(id i: Int) { id = i; us = nil } }
         struct Us: Codable { let you: Int; let them: Int }
         let db = try getTestDB()
@@ -823,8 +779,7 @@ struct MariaDBTests {
         #expect(us.count == 4)
     }
 
-    @Test func codableProperty() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func codableProperty() throws {
         struct Sub: Codable { let id: Int }
         struct Top: Codable { let id: Int; let sub: Sub? }
         let db = try getTestDB()
@@ -835,8 +790,7 @@ struct MariaDBTests {
         #expect(top.sub?.id == t1.sub?.id)
     }
 
-    @Test func badDecoding() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func badDecoding() throws {
         struct Top: Codable, TableNameProvider { static let tableName = "Top"; let id: Int }
         struct NTop: Codable, TableNameProvider { static let tableName = "Top"; let nid: Int }
         let db = try getTestDB()
@@ -848,8 +802,7 @@ struct MariaDBTests {
         } catch {}
     }
 
-    @Test func allPrimTypes1() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func allPrimTypes1() throws {
         struct AllTypes: Codable {
             let int: Int; let uint: UInt; let int64: Int64; let uint64: UInt64
             let int32: Int32?; let uint32: UInt32?; let int16: Int16; let uint16: UInt16
@@ -880,8 +833,7 @@ struct MariaDBTests {
         }
     }
 
-    @Test func allPrimTypes2() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func allPrimTypes2() throws {
         struct AllTypes2: Codable {
             func equals(rhs: AllTypes2) -> Bool {
                 guard int == rhs.int && uint == rhs.uint && int64 == rhs.int64 && uint64 == rhs.uint64 &&
@@ -925,8 +877,7 @@ struct MariaDBTests {
         }
     }
 
-    @Test func bespokeSQL() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func bespokeSQL() throws {
         let db = try getTestDB()
         let r1 = try db.sql("SELECT * FROM \(TestTable1.CRUDTableName) WHERE id = 2", TestTable1.self)
         #expect(r1.count == 1)
@@ -934,8 +885,7 @@ struct MariaDBTests {
         #expect(r2.count == 5)
     }
 
-    @Test func url() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func url() throws {
         struct TableWithURL: Codable { let id: Int; let url: URL }
         let db = try getTestDB()
         try db.create(TableWithURL.self)
@@ -949,8 +899,7 @@ struct MariaDBTests {
         #expect(j2[0].url.absoluteString == "http://localhost/")
     }
 
-    @Test func lastInsertId() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func lastInsertId() throws {
         struct ReturningItem: Codable, Equatable {
             let id: UInt64?; var def: Int?
             init(id: UInt64, def: Int? = nil) { self.id = id; self.def = def }
@@ -963,8 +912,7 @@ struct MariaDBTests {
         #expect(id == 1)
     }
 
-    @Test func emptyInsert() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func emptyInsert() throws {
         struct ReturningItem: Codable, Equatable {
             let id: Int?; var def: Int?
             init(id: Int, def: Int? = nil) { self.id = id; self.def = def }
@@ -1001,8 +949,7 @@ struct MariaDBTests {
         #expect(!MySQLDatabaseConfiguration.directStatements.contains(MySQLDatabaseConfiguration.firstKeyword("create table t as select ?")))
     }
 
-    @Test func nestedTransactionsUseSavepoints() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func nestedTransactionsUseSavepoints() throws {
         let db = try getDB()
         try db.create(Item.self, policy: .dropTable)
         let items = db.table(Item.self)
@@ -1021,8 +968,7 @@ struct MariaDBTests {
         #expect(try items.order(by: \.id).select().map(\.id) == [1, 3])
     }
 
-    @Test func lockAndUnlockTables() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func lockAndUnlockTables() throws {
         let db = try getDB()
         try db.create(Item.self, policy: .dropTable)
         try db.sql("LOCK TABLES direct_items WRITE")
@@ -1031,8 +977,7 @@ struct MariaDBTests {
         #expect(try db.table(Item.self).count() == 1)
     }
 
-    @Test func xaStatementsRun() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func xaStatementsRun() throws {
         let db = try getDB()
         // MySQL can't prepare XA (error 1295 → direct fallback); MariaDB may prepare it.
         try db.sql("XA START 'perfect-direct-test'")
@@ -1041,8 +986,7 @@ struct MariaDBTests {
         #expect(try db.sql("SELECT 41 + 1 AS answer", Answer.self).first?.answer == 42)
     }
 
-    @Test func rowReturningStatementsNeverSilentlyLoseRows() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func rowReturningStatementsNeverSilentlyLoseRows() throws {
         let db = try getDB()
         // Either the server prepares it and the rows come back, or it can't and we must get
         // a clear error -- never a silent empty result. CHECK TABLE on a missing table reports
@@ -1057,27 +1001,24 @@ struct MariaDBTests {
         #expect(try db.sql("SELECT 41 + 1 AS answer", Answer.self).first?.answer == 42)
     }
 
-    @Test func multiStatementTextIsFullyDrained() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func multiStatementTextIsFullyDrained() throws {
         let mysql = MySQL()
         #expect(mysql.connect(host: testHost, user: testUser, password: testPassword, db: "mysql",
-                              port: UInt32(testPort ?? 0), flag: 1 << 16)) // CLIENT_MULTI_STATEMENTS
+                              port: UInt32(testPort), flag: 1 << 16)) // CLIENT_MULTI_STATEMENTS
         let db = Database(configuration: MySQLDatabaseConfiguration(connection: mysql))
         #expect(throws: (any Error).self) { try db.sql("UNLOCK TABLES; SELECT 1") }
         // Without draining every result this fails with "Commands out of sync".
         #expect(try db.sql("SELECT 41 + 1 AS answer", Answer.self).first?.answer == 42)
     }
 
-    @Test func lowercaseDDLWithBindingsIsStillPrepared() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func lowercaseDDLWithBindingsIsStillPrepared() throws {
         let db = try getDB()
         try db.sql("drop table if exists direct_ctas")
         try db.sql("create table direct_ctas as select ? as answer", bindings: [("?", .integer(42))])
         #expect(try db.sql("SELECT answer FROM direct_ctas", Answer.self).first?.answer == 42)
     }
 
-    @Test func fieldNamesIncludingCallAfterExecute() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func fieldNamesIncludingCallAfterExecute() throws {
         let mysql = rawMySQL
         let select = MySQLStmt(mysql)
         #expect(select.prepare(statement: "SELECT 1 AS one, 'x' AS two"))
@@ -1092,8 +1033,7 @@ struct MariaDBTests {
         #expect(call.fieldNames() == [0: "one"])
     }
 
-    @Test func unpreparableOnEveryServerFallsBackToDirect() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func unpreparableOnEveryServerFallsBackToDirect() throws {
         let db = try getDB()
         // PREPARE/DEALLOCATE PREPARE can't be prepared on MariaDB or MySQL (error 1295), so this
         // exercises the fallback on both servers.
@@ -1102,8 +1042,7 @@ struct MariaDBTests {
         #expect(try db.sql("SELECT 41 + 1 AS answer", Answer.self).first?.answer == 42)
     }
 
-    @Test func fieldNamesFollowEachResultSet() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func fieldNamesFollowEachResultSet() throws {
         let mysql = rawMySQL
         #expect(mysql.query(statement: "DROP PROCEDURE IF EXISTS direct_two_sets"))
         #expect(mysql.query(statement: "CREATE PROCEDURE direct_two_sets() BEGIN SELECT 1 AS a; SELECT 1 AS b, 2 AS c, 3 AS d; END"))
@@ -1117,8 +1056,7 @@ struct MariaDBTests {
         #expect(call.fieldNames() == [0: "b", 1: "c", 2: "d"])
     }
 
-    @Test func resultsOfCallWithoutFieldNamesFirst() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func resultsOfCallWithoutFieldNamesFirst() throws {
         let mysql = rawMySQL
         #expect(mysql.query(statement: "DROP PROCEDURE IF EXISTS direct_proc_value"))
         #expect(mysql.query(statement: "CREATE PROCEDURE direct_proc_value() SELECT 6 * 7 AS v"))
@@ -1130,8 +1068,7 @@ struct MariaDBTests {
         #expect(value.map { "\($0)" } == "42", "\(String(describing: value))")
     }
 
-    @Test func statementKeepsItsConnectionAlive() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func statementKeepsItsConnectionAlive() throws {
         // `rawMySQL` makes a new connection; nothing else holds it once the statement exists.
         let stmt = MySQLStmt(rawMySQL)
         #expect(stmt.prepare(statement: "SELECT 2 + 2"), "\(stmt.errorMessage())")
@@ -1171,8 +1108,7 @@ struct MariaDBTests {
         return db
     }
 
-    @Test func statementReturnsBinaryColumnsAsBytes() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func statementReturnsBinaryColumnsAsBytes() throws {
         _ = try makeTable()
         let stmt = MySQLStmt(rawMySQL)
         #expect(stmt.prepare(statement: "SELECT id, b, vb, vc, j, cb FROM binary_cols ORDER BY id"), "\(stmt.errorMessage())")
@@ -1192,8 +1128,7 @@ struct MariaDBTests {
         #expect(rows[1][2] as? [UInt8] == Array("hi".utf8))
     }
 
-    @Test func queryResultsExposeBinaryColumnsAsBytes() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func queryResultsExposeBinaryColumnsAsBytes() throws {
         _ = try makeTable()
         let mysql = rawMySQL
         #expect(mysql.query(statement: "SELECT id, b, vb, vc, j, cb FROM binary_cols ORDER BY id"), "\(mysql.errorMessage())")
@@ -1211,8 +1146,7 @@ struct MariaDBTests {
         #expect(rows[1][4] == nil)
     }
 
-    @Test func queryResultsStringsAreNotTruncatedAtInvalidUTF8() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func queryResultsStringsAreNotTruncatedAtInvalidUTF8() throws {
         let mysql = rawMySQL
         #expect(mysql.query(statement: "SELECT X'61FF62' AS v"), "\(mysql.errorMessage())")
         let results = try #require(mysql.storeResults(), "\(mysql.errorMessage())")
@@ -1223,8 +1157,7 @@ struct MariaDBTests {
         #expect(mysql.storeResults()?.nextBytes()?.first ?? nil == [0x61, 0xFF, 0x62])
     }
 
-    @Test func bitAndGeometryAreBytesOnBothPaths() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func bitAndGeometryAreBytesOnBothPaths() throws {
         let db = try getDB()
         try db.sql("CREATE TABLE bit_geo (bits BIT(8), g GEOMETRY, e VARBINARY(4))")
         try db.sql("INSERT INTO bit_geo VALUES (b'10000001', ST_GeomFromText('POINT(1 2)'), X'')")
@@ -1253,8 +1186,7 @@ struct MariaDBTests {
         #expect(results.nextBytes() == nil)
     }
 
-    @Test func crudDecodesBinaryColumns() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func crudDecodesBinaryColumns() throws {
         let db = try makeTable()
         let rows = try db.table(BinaryRow.self).order(by: \.id).select().map { $0 }
         try #require(rows.count == 2)
