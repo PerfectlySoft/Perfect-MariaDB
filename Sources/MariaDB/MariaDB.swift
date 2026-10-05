@@ -181,35 +181,48 @@ public final class MySQL: @unchecked Sendable {
         return mysql_select_db(self.ptr!, namd) == 0
     }
 
+    /// Table names matching an optional LIKE pattern (`%` and `_` are wildcards; `\` escapes them).
     public func listTables(wildcard wild: String? = nil) -> [String] {
-        var result = [String]()
-        let res = wild == nil ? mysql_list_tables(self.ptr!, nil) : mysql_list_tables(self.ptr!, wild!)
-        if res != nil {
-            var row = mysql_fetch_row(res)
-            while row != nil {
-                if let tabPtr = row![0] {
-                    result.append(String(cString: tabPtr))
-                }
-                row = mysql_fetch_row(res)
-            }
-            mysql_free_result(res)
-        }
-        return result
+        return listNames("SHOW TABLES", like: wild)
     }
 
+    /// Database names matching an optional LIKE pattern (`%` and `_` are wildcards; `\` escapes them).
     public func listDatabases(wildcard wild: String? = nil) -> [String] {
-        var result = [String]()
-        let res = wild == nil ? mysql_list_dbs(self.ptr!, nil) : mysql_list_dbs(self.ptr!, wild!)
-        if res != nil {
-            var row = mysql_fetch_row(res)
-            while row != nil {
-                if let tabPtr = row![0] {
-                    result.append(String(cString: tabPtr))
-                }
-                row = mysql_fetch_row(res)
-            }
-            mysql_free_result(res)
+        return listNames("SHOW DATABASES", like: wild)
+    }
+
+    // libmariadb's mysql_list_tables / mysql_list_dbs paste the wildcard into
+    // "SHOW ... LIKE '%s'" without escaping it (and cut it off at 255 bytes), so a `'` in it
+    // ended the string literal. The query is built here instead, with the pattern escaped by
+    // mysql_real_escape_string, which follows the connection's character set and the server's
+    // NO_BACKSLASH_ESCAPES mode as libmariadb knows them. (A `SET NAMES` the client doesn't
+    // see, such as with session_track_system_variables off, isn't followed: set the charset
+    // with MYSQL_SET_CHARSET_NAME instead.) It's built as bytes: under a charset other than
+    // UTF-8 the escaped pattern needn't be valid UTF-8.
+    private func listNames(_ show: String, like wild: String?) -> [String] {
+        var query = Array(show.utf8)
+        if let wild = wild {
+            let from = Array(wild.utf8).map { CChar(bitPattern: $0) } + [0]
+            var escaped = [CChar](repeating: 0, count: (from.count - 1) * 2 + 1)
+            let length = mysql_real_escape_string(self.ptr!, &escaped, from, UInt(from.count - 1))
+            guard length != UInt.max else { return [] }
+            query += Array(" LIKE '".utf8)
+            query += escaped[0..<Int(length)].map { UInt8(bitPattern: $0) }
+            query.append(UInt8(ascii: "'"))
         }
+        let status = query.withUnsafeBufferPointer { buffer in
+            buffer.withMemoryRebound(to: CChar.self) { mysql_real_query(self.ptr!, $0.baseAddress, UInt($0.count)) }
+        }
+        guard status == 0, let res = mysql_store_result(self.ptr!) else { return [] }
+        var result = [String]()
+        var row = mysql_fetch_row(res)
+        while row != nil {
+            if let namePtr = row![0] {
+                result.append(String(cString: namePtr))
+            }
+            row = mysql_fetch_row(res)
+        }
+        mysql_free_result(res)
         return result
     }
 
