@@ -10,14 +10,10 @@ import Testing
 // server started without TLS (e.g. MariaDB with --skip-ssl) to also check that modes requiring TLS
 // refuse it.
 
-private let env = ProcessInfo.processInfo.environment
-private let host = env["MARIA_TEST_HOST"] ?? "127.0.0.1"
-private let port = env["MARIA_TEST_PORT"].flatMap(Int.init)
-private let user = env["MARIA_TEST_USER"] ?? "root"
-private let password = env["MARIA_TEST_PASSWORD"] ?? "123"
-private let noTLSHost = env["MARIA_TEST_NOTLS_HOST"] ?? host
-private let noTLSPort = env["MARIA_TEST_NOTLS_PORT"].flatMap(Int.init)
-private var mariaEnabled: Bool { env["MARIA_TESTS"] == "1" }
+private let host = MariaTestEnvironment.host
+private let user = MariaTestEnvironment.user
+private let password = MariaTestEnvironment.password
+private let noTLSHost = MariaTestEnvironment.noTLSHost
 
 // A throwaway CA that signed nothing; no server certificate verifies against it.
 private let unrelatedCA = """
@@ -49,7 +45,7 @@ ioamVHL6w6te45I=
         case disabled = 1, preferred, required, verifyCA, verifyIdentity
     }
 
-    private func connect(_ mode: Mode, host: String = host, port: Int? = port, ca: String? = nil, reconnect: Bool = false) -> MySQL {
+    private func connect(_ mode: Mode, host: String = host, port: Int = MariaTestEnvironment.port, ca: String? = nil, reconnect: Bool = false) -> MySQL {
         let mysql = MySQL()
         mysql.setOption(.MYSQL_OPT_CONNECT_TIMEOUT, 5)
         if reconnect {
@@ -59,7 +55,7 @@ ioamVHL6w6te45I=
             #expect(mysql.setOption(.MYSQL_OPT_SSL_CA, ca))
         }
         #expect(mysql.setOption(.MYSQL_OPT_SSL_MODE, mode.rawValue), "setOption(MYSQL_OPT_SSL_MODE, \(mode)) failed: \(mysql.errorMessage())")
-        _ = mysql.connect(host: host, user: user, password: password, db: "mysql", port: UInt32(port ?? 0))
+        _ = mysql.connect(host: host, user: user, password: password, db: "mysql", port: UInt32(port))
         return mysql
     }
 
@@ -73,8 +69,7 @@ ioamVHL6w6te45I=
         return row[1] ?? ""
     }
 
-    @Test func encryptedModesUseTLS() {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func encryptedModesUseTLS() {
         for mode in [Mode.preferred, .required] {
             let mysql = connect(mode)
             #expect(mysql.errorCode() == 0, "\(mode): \(mysql.errorMessage())")
@@ -82,15 +77,13 @@ ioamVHL6w6te45I=
         }
     }
 
-    @Test func disabledModeUsesPlaintext() {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func disabledModeUsesPlaintext() {
         let mysql = connect(.disabled)
         #expect(mysql.errorCode() == 0, "\(mysql.errorMessage())")
         #expect(cipher(mysql) == "")
     }
 
-    @Test func verifyingModesRejectAnUntrustedServer() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func verifyingModesRejectAnUntrustedServer() throws {
         let caFile = FileManager.default.temporaryDirectory.appendingPathComponent("perfect-mariadb-unrelated-ca-\(UUID()).pem")
         try unrelatedCA.write(to: caFile, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: caFile) }
@@ -101,9 +94,9 @@ ioamVHL6w6te45I=
         }
     }
 
-    @Test func verifyingModesRejectASelfSignedServerWithoutCA() {
-        // Connector/C 3.4 deliberately skips verification on loopback connections without a CA.
-        guard mariaEnabled, !["127.0.0.1", "::1", "localhost"].contains(host) else { return }
+    // Connector/C 3.4 deliberately skips verification on loopback connections without a CA.
+    @Test(.mariaLive, .enabled(if: !["127.0.0.1", "::1"].contains(host), "needs a non-loopback MARIA_TEST_HOST"))
+    func verifyingModesRejectASelfSignedServerWithoutCA() {
         for mode in [Mode.verifyCA, .verifyIdentity] {
             let mysql = connect(mode)
             #expect(mysql.errorCode() != 0, "\(mode) accepted a self-signed certificate")
@@ -111,14 +104,13 @@ ioamVHL6w6te45I=
         }
     }
 
-    @Test func requiredModeTurnsOffReconnect() throws {
-        guard mariaEnabled else { return }
+    @Test(.mariaLive) func requiredModeTurnsOffReconnect() throws {
         let mysql = connect(.required, reconnect: true)
         #expect(mysql.errorCode() == 0, "\(mysql.errorMessage())")
         #expect(mysql.query(statement: "SELECT CONNECTION_ID()"), "\(mysql.errorMessage())")
         let id = try #require(mysql.storeResults()?.next()?[0] ?? nil)
         let killer = MySQL()
-        #expect(killer.connect(host: host, user: user, password: password, db: "mysql", port: UInt32(port ?? 0)), "\(killer.errorMessage())")
+        #expect(killer.connect(host: host, user: user, password: password, db: "mysql", port: UInt32(MariaTestEnvironment.port)), "\(killer.errorMessage())")
         #expect(killer.query(statement: "KILL \(id)"), "\(killer.errorMessage())")
         #expect(!mysql.ping(), "reconnected; a reconnect isn't checked for TLS")
     }
@@ -130,8 +122,9 @@ ioamVHL6w6te45I=
         }
     }
 
-    @Test func modesRequiringTLSRefuseAPlaintextServer() {
-        guard mariaEnabled, let noTLSPort else { return }
+    @Test(.mariaLive, .enabled(if: MariaTestEnvironment.noTLSPort != nil, Comment(rawValue: MariaTestEnvironment.noTLSSkipReason ?? "")))
+    func modesRequiringTLSRefuseAPlaintextServer() throws {
+        let noTLSPort = try #require(MariaTestEnvironment.noTLSPort)
         for mode in [Mode.required, .verifyCA, .verifyIdentity] {
             let mysql = connect(mode, host: noTLSHost, port: noTLSPort)
             #expect(mysql.errorCode() == 2026 /* CR_SSL_CONNECTION_ERROR */, "\(mode): \(mysql.errorMessage())")

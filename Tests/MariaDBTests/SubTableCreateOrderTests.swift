@@ -11,7 +11,7 @@ import Testing
 // emit the sub-tables' statements first, so MySQL 8.4 failed with "Failed to open the
 // referenced table" and MariaDB 11.8 with errno 150.
 //
-// Run the live tests with: MARIA_TESTS=1 [MARIA_TEST_HOST=… MARIA_TEST_PORT=… MARIA_TEST_USER=…
+// Run the live tests with: MARIA_TESTS=1 MARIA_TEST_PORT=… [MARIA_TEST_HOST=… MARIA_TEST_USER=…
 // MARIA_TEST_PASSWORD=…] swift test
 
 private struct OrderParent: Codable {
@@ -105,11 +105,10 @@ struct SubTableCreateOrderDDLTests {
 	}
 }
 
-private let testEnv = ProcessInfo.processInfo.environment
-private let testHost = testEnv["MARIA_TEST_HOST"] ?? "127.0.0.1"
-private let testPort = testEnv["MARIA_TEST_PORT"].flatMap(Int.init)
-private let testUser = testEnv["MARIA_TEST_USER"] ?? "root"
-private let testPassword = testEnv["MARIA_TEST_PASSWORD"] ?? "123"
+private let testHost = MariaTestEnvironment.host
+private var testPort: Int { MariaTestEnvironment.port }
+private let testUser = MariaTestEnvironment.user
+private let testPassword = MariaTestEnvironment.password
 private let testAdminDB = "mysql"
 
 @Suite("create() with sub-tables on a live server", .serialized)
@@ -134,7 +133,7 @@ struct SubTableCreateOrderLiveTests {
 		try admin.sql("DROP DATABASE IF EXISTS `\(Self.schema)`")
 	}
 
-	@Test(.enabled(if: ProcessInfo.processInfo.environment["MARIA_TESTS"] == "1"))
+	@Test(.mariaLive)
 	func createParentWithReferencingChildren() throws {
 		let db = try freshDatabase()
 		defer { try? dropSchema() }
@@ -161,7 +160,7 @@ struct SubTableCreateOrderLiveTests {
 		#expect(try db.table(OrderChild.self).count() == 0)
 	}
 
-	@Test(.enabled(if: ProcessInfo.processInfo.environment["MARIA_TESTS"] == "1"))
+	@Test(.mariaLive)
 	func createParentReferencingASubTable() throws {
 		let db = try freshDatabase()
 		defer { try? dropSchema() }
@@ -173,7 +172,7 @@ struct SubTableCreateOrderLiveTests {
 		#expect(try db.table(OrderOwner.self).count() == 0)
 	}
 
-	@Test(.enabled(if: ProcessInfo.processInfo.environment["MARIA_TESTS"] == "1"))
+	@Test(.mariaLive)
 	func reconcileAddsForeignKeyConstraint() throws {
 		let db = try freshDatabase()
 		defer { try? dropSchema() }
@@ -194,7 +193,7 @@ struct SubTableCreateOrderLiveTests {
 		#expect(child.parentId == nil)
 	}
 
-	@Test(.enabled(if: ProcessInfo.processInfo.environment["MARIA_TESTS"] == "1"))
+	@Test(.mariaLive)
 	func reconcileDropsARemovedForeignKeyColumn() throws {
 		let db = try freshDatabase()
 		defer { try? dropSchema() }
@@ -220,7 +219,7 @@ struct SubTableCreateOrderLiveTests {
 		}
 	}
 
-	@Test(.enabled(if: ProcessInfo.processInfo.environment["MARIA_TESTS"] == "1"))
+	@Test(.mariaLive)
 	func reconcileDropsColumnsSharingAForeignKey() throws {
 		let db = try freshDatabase()
 		defer { try? dropSchema() }
@@ -240,7 +239,7 @@ struct SubTableCreateOrderLiveTests {
 		#expect(try db.table(PairRow.self).count() == 1)
 	}
 
-	@Test(.enabled(if: ProcessInfo.processInfo.environment["MARIA_TESTS"] == "1"))
+	@Test(.mariaLive)
 	func reconcileKeepsMixedCaseColumns() throws {
 		let db = try freshDatabase()
 		defer { try? dropSchema() }

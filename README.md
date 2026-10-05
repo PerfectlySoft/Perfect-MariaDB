@@ -111,9 +111,13 @@ For background on the broader Perfect framework, see [perfect.org](http://perfec
 
 ## Testing
 
-The tests that need a server are skipped unless `MARIA_TESTS=1` is set. They connect to `127.0.0.1` as `root` with
-password `123` by default; override with `MARIA_TEST_HOST`, `MARIA_TEST_PORT`, `MARIA_TEST_USER` and
-`MARIA_TEST_PASSWORD`. For example, with a throwaway MariaDB container on port 3308:
+The tests that need a server drop and recreate databases, so they are skipped (and reported as skipped) unless
+`MARIA_TESTS=1` is set and `MARIA_TEST_PORT` names a port from 1 to 65535. There is no default port: the client would
+otherwise fall back to 3306, which may be a real server. They connect to `127.0.0.1` as `root` with password `123` by
+default; override with `MARIA_TEST_HOST`, `MARIA_TEST_USER` and `MARIA_TEST_PASSWORD`. `MARIA_TEST_HOST=localhost` is
+refused, and so is an empty host, because the client then uses the Unix socket and ignores the port. The foreign-key
+tests also need `MARIA_FK_LIVE_TESTS=1`, and their password defaults to empty rather than `123`. For example, with a
+throwaway MariaDB container on port 3308:
 
 ```sh
 MARIA_TESTS=1 MARIA_TEST_PORT=3308 swift test
