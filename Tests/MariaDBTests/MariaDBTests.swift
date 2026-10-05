@@ -113,10 +113,6 @@ private func getTestDB() throws -> Database<DBConfiguration> {
 extension LiveServerTests {
 @Suite(.serialized)
 struct MariaDBTests {
-    // PerfectCRUD caches table structures by unqualified type name, so test-local types that
-    // share a name (e.g. `Me`, `Top`) would otherwise reuse another test's columns.
-    init() { CRUDClearTableStructureCache() }
-
     @Test func connect() throws {
         guard mariaEnabled else { return }
         let mysql = MySQL()
