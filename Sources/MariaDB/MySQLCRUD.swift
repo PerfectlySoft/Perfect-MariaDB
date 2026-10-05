@@ -167,7 +167,11 @@ class MySQLGenDelegate: SQLGenDelegate, @unchecked Sendable {
         return "?"
     }
 
-    func quote(identifier: String) throws -> String { return "`\(identifier)`" }
+    // A backtick inside the name is doubled, so a name (such as a Dynamic API table or field
+    // name, or a constraint name read from the server) can't end the quoted identifier early.
+    func quote(identifier: String) throws -> String {
+        return "`\(identifier.replacingOccurrences(of: "`", with: "``"))`"
+    }
 
     // A table's FOREIGN KEY constraint needs its target table to exist, and a table can't be
     // dropped while another table's constraint references it. So the sub-tables aren't simply
@@ -232,8 +236,18 @@ class MySQLGenDelegate: SQLGenDelegate, @unchecked Sendable {
             let newColumnMap: [String: TableStructure.Column] = .init(uniqueKeysWithValues: forTable.columns.map { ($0.name.lowercased(), $0) })
             let addColumns = newColumnMap.keys.filter { existingColumnMap[$0] == nil }
             let removeColumns: [String] = existingColumnMap.filter { newColumnMap[$0.key] == nil }.map { $0.value.field }
-            var sub: [String] = try removeColumns.map {
-                "ALTER TABLE \(try quote(identifier: forTable.tableName)) DROP COLUMN \(try quote(identifier: $0))"
+            // A column can't be dropped while a FOREIGN KEY constraint on it exists (error 1828),
+            // so a removed @ForeignKey column's constraints are dropped in the same statement.
+            // If they can't be read, the columns are dropped as before (and one with a constraint
+            // fails as before), rather than failing a reconcile that has no constraint to drop. A
+            // constraint over several removed columns is dropped with the first of them only.
+            let foreignKeys = removeColumns.isEmpty ? [] : (try? getExistingForeignKeys(forTable: forTable.tableName)) ?? []
+            var droppedForeignKeys: Set<String> = []
+            var sub: [String] = try removeColumns.map { column in
+                let dropForeignKeys = try foreignKeys
+                    .filter { $0.columnName.lowercased() == column.lowercased() && droppedForeignKeys.insert($0.constraintName).inserted }
+                    .map { "DROP FOREIGN KEY \(try quote(identifier: $0.constraintName)), " }
+                return "ALTER TABLE \(try quote(identifier: forTable.tableName)) \(dropForeignKeys.joined())DROP COLUMN \(try quote(identifier: column))"
             }
             sub += try addColumns.compactMap { newColumnMap[$0] }.map {
                 // A new @ForeignKey column gets its constraint in the same statement.
@@ -260,6 +274,32 @@ class MySQLGenDelegate: SQLGenDelegate, @unchecked Sendable {
             ON \(try quote(identifier: name)) (\(try columns.map { try quote(identifier: $0) }.joined(separator: ",")))
             """
         return [stat]
+    }
+
+    struct ForeignKeyInfo: Codable {
+        let columnName: String
+        let constraintName: String
+    }
+
+    // The FOREIGN KEY constraints of a table in the current database, one row per column.
+    func getExistingForeignKeys(forTable: String) throws -> [ForeignKeyInfo] {
+        let statement = """
+            SELECT COLUMN_NAME AS columnName, CONSTRAINT_NAME AS constraintName
+            FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND REFERENCED_TABLE_NAME IS NOT NULL
+            """
+        let stat = MySQLStmt(database)
+        guard stat.prepare(statement: statement) else {
+            throw MySQLCRUDError("Error preparing statement. \(stat.errorMessage())")
+        }
+        stat.bindParam(forTable)
+        let exeDelegate = MySQLStmtExeDelegate(connection: database, stat: stat)
+        var ret: [ForeignKeyInfo] = []
+        while try exeDelegate.hasNext() {
+            let rowDecoder: CRUDRowDecoder<ColumnKey> = CRUDRowDecoder(delegate: exeDelegate)
+            ret.append(try ForeignKeyInfo(from: rowDecoder))
+        }
+        return ret
     }
 
     func getExistingColumnData(forTable: String) -> [MySQLColumnInfo]? {
