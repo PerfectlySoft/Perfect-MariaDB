@@ -1,51 +1,31 @@
 import mariadbclient
 import Foundation
 
-struct GenerateFromPointer<T>: IteratorProtocol {
-    typealias Element = T
-    var count = 0
-    var pos = 0
-    var from: UnsafeMutablePointer<T>
-    init(from: UnsafeMutablePointer<T>, count: Int) {
-        self.from = from
-        self.count = count
-    }
-    mutating func next() -> Element? {
-        guard count > 0 else { return nil }
-        self.count -= 1
-        let result = self.from[self.pos]
-        self.pos += 1
-        return result
-    }
-}
-
-struct Encoding {
-    static func encode<D: UnicodeCodec, G: IteratorProtocol>(codec inCodec: D, generator: G) -> String where G.Element == D.CodeUnit {
-        var encodedString = ""
-        var finished = false
-        var mutableDecoder = inCodec
-        var mutableGenerator = generator
-        repeat {
-            let decodingResult = mutableDecoder.decode(&mutableGenerator)
-            switch decodingResult {
-            case .scalarValue(let char): encodedString.append(String(char))
-            case .emptyInput: finished = true
-            case .error: finished = true
-            }
-        } while !finished
-        return encodedString
-    }
-}
-
+/// Converts between UTF-8 bytes and String. Invalid UTF-8 is replaced with U+FFFD rather than truncating.
 struct UTF8Encoding {
-    static func encode<G: IteratorProtocol>(generator gen: G) -> String where G.Element == UTF8.CodeUnit {
-        return Encoding.encode(codec: UTF8(), generator: gen)
-    }
     static func encode<S: Sequence>(bytes byts: S) -> String where S.Iterator.Element == UTF8.CodeUnit {
-        return encode(generator: byts.makeIterator())
+        return String(decoding: Array(byts), as: UTF8.self)
+    }
+    static func encode(_ ptr: UnsafePointer<UInt8>, count: Int) -> String {
+        return String(decoding: UnsafeBufferPointer(start: ptr, count: count), as: UTF8.self)
     }
     static func decode(string str: String) -> [UInt8] {
         return [UInt8](str.utf8)
+    }
+}
+
+/// True for columns whose values are raw bytes: string and BLOB types in the binary character set
+/// (BINARY, VARBINARY, BLOB, CAST(... AS BINARY), ...), plus BIT and GEOMETRY. Numeric and temporal
+/// types also report the binary character set but aren't bytes.
+func mysqlFieldIsBinary(_ field: UnsafeMutablePointer<MYSQL_FIELD>) -> Bool {
+    switch field.pointee.type {
+    case MYSQL_TYPE_BIT, MYSQL_TYPE_GEOMETRY:
+        return true
+    case MYSQL_TYPE_TINY_BLOB, MYSQL_TYPE_MEDIUM_BLOB, MYSQL_TYPE_LONG_BLOB, MYSQL_TYPE_BLOB,
+         MYSQL_TYPE_STRING, MYSQL_TYPE_VAR_STRING, MYSQL_TYPE_VARCHAR:
+        return field.pointee.charsetnr == 63 // binary
+    default:
+        return false
     }
 }
 
@@ -320,20 +300,30 @@ public final class MySQL: @unchecked Sendable {
             return Int(mysql_num_fields(self.ptr!))
         }
 
+        /// Invalid UTF-8 is replaced with U+FFFD. Use `nextBytes()` for binary columns
+        /// (see `fieldIsBinary(at:)`).
         public func next() -> Element? {
+            return nextRow { raw, len in
+                raw.withMemoryRebound(to: UInt8.self, capacity: len) { UTF8Encoding.encode($0, count: len) }
+            }
+        }
+
+        /// The next row as the exact bytes of each column (nil for NULL).
+        /// Advances the same cursor as `next()`.
+        public func nextBytes() -> [[UInt8]?]? {
+            return nextRow { raw, len in
+                raw.withMemoryRebound(to: UInt8.self, capacity: len) { Array(UnsafeBufferPointer(start: $0, count: len)) }
+            }
+        }
+
+        private func nextRow<T>(_ convert: (UnsafeMutablePointer<CChar>, Int) -> T) -> [T?]? {
             guard let row = mysql_fetch_row(self.ptr), let lengths = mysql_fetch_lengths(self.ptr) else {
                 return nil
             }
-            var ret = [String?]()
+            var ret = [T?]()
             for fieldIdx in 0..<self.numFields() {
-                let length = lengths[fieldIdx]
-                let rowVal = row[fieldIdx]
-                let len = Int(length)
-                if let raw = rowVal {
-                    let s = raw.withMemoryRebound(to: UInt8.self, capacity: len) {
-                        UTF8Encoding.encode(generator: GenerateFromPointer(from: $0, count: len))
-                    }
-                    ret.append(s)
+                if let raw = row[fieldIdx] {
+                    ret.append(convert(raw, Int(lengths[fieldIdx])))
                 } else {
                     ret.append(nil)
                 }
@@ -341,8 +331,27 @@ public final class MySQL: @unchecked Sendable {
             return ret
         }
 
+        /// True if the column's values are raw bytes: BINARY, VARBINARY, BLOB and other string types in
+        /// the binary character set, plus BIT and GEOMETRY. These are the columns `MySQLStmt` returns as
+        /// `[UInt8]`; read them here with `nextBytes()`, since `next()` can't represent them as text.
+        /// False after `close()`.
+        public func fieldIsBinary(at index: Int) -> Bool {
+            guard let ptr = self.ptr, index >= 0, index < Int(mysql_num_fields(ptr)),
+                  let field = mysql_fetch_field_direct(ptr, UInt32(index)) else {
+                return false
+            }
+            return mysqlFieldIsBinary(field)
+        }
+
         public func forEachRow(callback: (Element) -> ()) {
             while let element = self.next() {
+                callback(element)
+            }
+        }
+
+        /// Passes each remaining row's exact column bytes to the callback provided.
+        public func forEachRowBytes(callback: ([[UInt8]?]) -> ()) {
+            while let element = self.nextBytes() {
                 callback(element)
             }
         }

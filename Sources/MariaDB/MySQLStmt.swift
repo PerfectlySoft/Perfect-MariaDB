@@ -54,17 +54,13 @@ public final class MySQLStmt: @unchecked Sendable {
     }
 
     func mysqlTypeToFieldType(_ field: UnsafeMutablePointer<MYSQL_FIELD>) -> FieldType {
+        if mysqlFieldIsBinary(field) { return .bytes }
         switch field.pointee.type {
         case MYSQL_TYPE_NULL: return .null
         case MYSQL_TYPE_FLOAT, MYSQL_TYPE_DOUBLE: return .double
         case MYSQL_TYPE_TINY, MYSQL_TYPE_SHORT, MYSQL_TYPE_LONG, MYSQL_TYPE_INT24, MYSQL_TYPE_LONGLONG: return .integer
         case MYSQL_TYPE_TIMESTAMP, MYSQL_TYPE_DATE, MYSQL_TYPE_TIME, MYSQL_TYPE_DATETIME, MYSQL_TYPE_YEAR, MYSQL_TYPE_NEWDATE: return .date
         case MYSQL_TYPE_DECIMAL, MYSQL_TYPE_NEWDECIMAL: return .string
-        // BINARY / VARBINARY report as (VAR_)STRING with the binary charset.
-        case MYSQL_TYPE_TINY_BLOB, MYSQL_TYPE_MEDIUM_BLOB, MYSQL_TYPE_LONG_BLOB, MYSQL_TYPE_BLOB,
-             MYSQL_TYPE_STRING, MYSQL_TYPE_VAR_STRING, MYSQL_TYPE_VARCHAR:
-            if field.pointee.charsetnr == 63 { return .bytes }
-            fallthrough
         default: return .string
         }
     }
@@ -359,17 +355,13 @@ public final class MySQLStmt: @unchecked Sendable {
 
         func mysqlTypeToGeneralType(_ field: UnsafeMutablePointer<MYSQL_FIELD>) -> GeneralType {
             let type = field.pointee.type
+            if mysqlFieldIsBinary(field) { return .bytes(type) }
             switch type {
             case MYSQL_TYPE_NULL: return .null
             case MYSQL_TYPE_FLOAT, MYSQL_TYPE_DOUBLE: return .double(type)
             case MYSQL_TYPE_TINY, MYSQL_TYPE_SHORT, MYSQL_TYPE_LONG, MYSQL_TYPE_INT24, MYSQL_TYPE_LONGLONG: return .integer(type)
             case MYSQL_TYPE_TIMESTAMP, MYSQL_TYPE_DATE, MYSQL_TYPE_TIME, MYSQL_TYPE_DATETIME, MYSQL_TYPE_YEAR, MYSQL_TYPE_NEWDATE: return .date(type)
             case MYSQL_TYPE_DECIMAL, MYSQL_TYPE_NEWDECIMAL: return .string(type)
-            // BINARY / VARBINARY report as (VAR_)STRING with the binary charset.
-            case MYSQL_TYPE_TINY_BLOB, MYSQL_TYPE_MEDIUM_BLOB, MYSQL_TYPE_LONG_BLOB, MYSQL_TYPE_BLOB,
-                 MYSQL_TYPE_STRING, MYSQL_TYPE_VAR_STRING, MYSQL_TYPE_VARCHAR:
-                if field.pointee.charsetnr == 63 { return .bytes(type) }
-                fallthrough
             default: return .string(type)
             }
         }
@@ -442,7 +434,7 @@ public final class MySQLStmt: @unchecked Sendable {
                 bind.buffer_length = UInt(length)
                 let res = mysql_stmt_fetch_column(stmt.ptr, &bind, UInt32(n), 0)
                 guard res == 0 else { return nil }
-                return UTF8Encoding.encode(generator: GenerateFromPointer(from: raw, count: length))
+                return UTF8Encoding.encode(raw, count: length)
             case .null:
                 return nil
             }

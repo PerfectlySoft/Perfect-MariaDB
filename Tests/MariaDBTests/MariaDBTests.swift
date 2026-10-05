@@ -1196,6 +1196,67 @@ struct MariaDBTests {
         #expect(rows[1][2] as? [UInt8] == Array("hi".utf8))
     }
 
+    @Test func queryResultsExposeBinaryColumnsAsBytes() throws {
+        guard mariaEnabled else { return }
+        _ = try makeTable()
+        let mysql = rawMySQL
+        #expect(mysql.query(statement: "SELECT id, b, vb, vc, j, cb FROM binary_cols ORDER BY id"), "\(mysql.errorMessage())")
+        let results = try #require(mysql.storeResults(), "\(mysql.errorMessage())")
+        #expect((0..<results.numFields()).map { results.fieldIsBinary(at: $0) } == [false, true, true, false, false, false])
+        #expect(!results.fieldIsBinary(at: 6))
+        var rows: [[[UInt8]?]] = []
+        results.forEachRowBytes { rows.append($0) }
+        try #require(rows.count == 2)
+        #expect(rows[0][0] == Array("1".utf8))
+        #expect(rows[0][1] == [0xFF, 0x00, 0xFE, 0x01])
+        #expect(rows[0][2] == [0xFF])
+        #expect(rows[0][3] == Array("abc".utf8))
+        #expect(rows[1][1] == [0x6F, 0x6B, 0x00, 0x00])
+        #expect(rows[1][4] == nil)
+    }
+
+    @Test func queryResultsStringsAreNotTruncatedAtInvalidUTF8() throws {
+        guard mariaEnabled else { return }
+        let mysql = rawMySQL
+        #expect(mysql.query(statement: "SELECT X'61FF62' AS v"), "\(mysql.errorMessage())")
+        let results = try #require(mysql.storeResults(), "\(mysql.errorMessage())")
+        #expect(results.fieldIsBinary(at: 0))
+        // Used to stop at the first invalid byte and return "a".
+        #expect(results.next()?.first ?? nil == "a\u{FFFD}b")
+        #expect(mysql.query(statement: "SELECT X'61FF62' AS v"), "\(mysql.errorMessage())")
+        #expect(mysql.storeResults()?.nextBytes()?.first ?? nil == [0x61, 0xFF, 0x62])
+    }
+
+    @Test func bitAndGeometryAreBytesOnBothPaths() throws {
+        guard mariaEnabled else { return }
+        let db = try getDB()
+        try db.sql("CREATE TABLE bit_geo (bits BIT(8), g GEOMETRY, e VARBINARY(4))")
+        try db.sql("INSERT INTO bit_geo VALUES (b'10000001', ST_GeomFromText('POINT(1 2)'), X'')")
+        let mysql = rawMySQL
+        let stmt = MySQLStmt(mysql)
+        #expect(stmt.prepare(statement: "SELECT bits, g, e FROM bit_geo"), "\(stmt.errorMessage())")
+        #expect(stmt.execute(), "\(stmt.errorMessage())")
+        var stmtRow: [Any?] = []
+        #expect(stmt.results().forEachRow { stmtRow = $0 })
+        try #require(stmtRow.count == 3)
+        #expect(stmtRow[0] as? [UInt8] == [0x81])
+        // 4-byte SRID + 21-byte WKB point.
+        #expect((stmtRow[1] as? [UInt8])?.count == 25)
+        #expect(stmtRow[2] as? [UInt8] == [])
+
+        #expect(mysql.query(statement: "SELECT bits, g, e FROM bit_geo"), "\(mysql.errorMessage())")
+        let results = try #require(mysql.storeResults(), "\(mysql.errorMessage())")
+        #expect((0..<3).map { results.fieldIsBinary(at: $0) } == [true, true, true])
+        let row = results.nextBytes()
+        #expect(row?[0] ?? nil == [0x81])
+        #expect(row?[1] ?? nil == stmtRow[1] as? [UInt8])
+        // Empty, not NULL.
+        #expect(row?[2] ?? nil == [])
+        results.close()
+        #expect(!results.fieldIsBinary(at: 0))
+        #expect(results.nextBytes() == nil)
+    }
+
     @Test func crudDecodesBinaryColumns() throws {
         guard mariaEnabled else { return }
         let db = try makeTable()
