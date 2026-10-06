@@ -96,7 +96,7 @@ jobs:
       - name: Install client library
         run: |
           brew install mariadb-connector-c
-          # Keg-only; SwiftPM before Swift 6.4 doesn't find it through the brew provider alone.
+          # Keg-only; Swift 6.2's SwiftPM (Xcode 26.3) didn't find it through the brew provider alone.
           echo "PKG_CONFIG_PATH=$(brew --prefix mariadb-connector-c)/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Build (warnings are errors)

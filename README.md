@@ -37,8 +37,8 @@ brew install mariadb-connector-c
 ```
 
 Homebrew installs it keg-only (it conflicts with the `mariadb` formula), so it isn't linked into `/opt/homebrew`.
-SwiftPM in Swift 6.4 finds it through the package's Homebrew provider; with Swift 6.2 and 6.3 (Xcode 26.x), point
-pkg-config at it, or the build fails with `'mysql.h' file not found`:
+SwiftPM in Swift 6.4 finds it through the package's Homebrew provider. With older toolchains (seen with Swift 6.2 in
+Xcode 26.3), point pkg-config at it, or the build fails with `'mysql.h' file not found`:
 
 ```bash
 export PKG_CONFIG_PATH="$(brew --prefix mariadb-connector-c)/lib/pkgconfig"
@@ -97,10 +97,16 @@ Perfect-CRUD's Dynamic API (`select(_: DynamicQuery)`, `mutate(_:)`, `execute(_:
 connector. Integer columns read as `.int` or `.uint` (unsigned columns), FLOAT/DOUBLE as `.double`, binary values as
 `.bytes`, and everything else, including DECIMAL and date/time columns, as `.string`. Column names are matched ignoring
 case; when a result has several columns whose names differ only by case, or not at all (`p.id, c.id` in a join), the
-row keeps the first, so alias the others. `affectedRows` and `insertedID` are reported for statements that don't
-return rows. A prepared statement holds one statement, so `DynamicSQL` text with several statements fails as a whole,
-unless it starts with a statement that runs unprepared (such as `BEGIN`, or upper-case `CREATE`) on a connection opened with
-`CLIENT_MULTI_STATEMENTS`, in which case every statement runs and an error in any of them is thrown.
+row keeps the first, so alias the others. `affectedRows` and `insertedID` are reported; a statement that returns rows
+(SELECT, CALL, MariaDB's `INSERT ... RETURNING`) reports its row count and no insert ID. A prepared statement holds one
+statement, so `DynamicSQL` text with several statements fails as a whole, unless it starts with a statement that runs
+unprepared (such as `BEGIN`, or upper-case `CREATE`) on a connection opened with `CLIENT_MULTI_STATEMENTS`, in which
+case every statement runs and an error in any of them is thrown.
+
+Limits: an inserted ID above `Int64.max` (BIGINT UNSIGNED) is reported as nil; an UPDATE that changes nothing reports
+0 affected rows (the server counts changed rows, not matched ones); `TINYINT(1)` reads as `.int`, not `.bool`; `YEAR` reads as `.string`; statements that run
+unprepared (`BEGIN`, `SAVEPOINT`, `LOCK`, upper-case `CREATE`/`DROP`/`ALTER` and the like) report 0 affected rows; and
+only the first result set of a CALL that returns several is visible.
 
 ### TLS
 
@@ -136,8 +142,8 @@ of this.
 The previous release was 3.0.4 (2020). 4.0.0 is a Swift 6 rewrite on Perfect-CRUD 3; see Perfect-CRUD's own
 release notes for its changes.
 
-- **Toolchain and platforms:** Swift 6.2 or newer and macOS 12 or newer. On macOS with Swift 6.2/6.3, set
-  `PKG_CONFIG_PATH` as described above.
+- **Toolchain and platforms:** Swift 6.2 or newer and macOS 12 or newer. On macOS with a toolchain older than Swift
+  6.4, set `PKG_CONFIG_PATH` as described above.
 - **Product name:** depend on `.product(name: "PerfectMariaDB", package: "Perfect-MariaDB")` instead of `"MariaDB"`.
   `import MariaDB` is unchanged.
 - **Binary values are bytes:** through `MySQLStmt`, BINARY, VARBINARY, BIT and GEOMETRY values, binary expressions such
@@ -162,6 +168,7 @@ release notes for its changes.
   `time_zone` (run the connection in UTC, e.g. `SET time_zone = '+00:00'`, if you need those to line up). The zero
   date (`0000-00-00`) reads as nil for an optional `Date`; for a non-optional one it's an error, which Perfect-CRUD's
   `select()` currently skips the row on.
+- **`MySQLOpt` has a new case,** `MYSQL_OPT_SSL_MODE`, so an exhaustive `switch` over `MySQLOpt` needs a case for it.
 - **`connect()`** always passes `CLIENT_REMEMBER_OPTIONS`, so options survive a failed connection attempt.
 
 ## Further Information

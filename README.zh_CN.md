@@ -55,7 +55,7 @@
 brew install mariadb-connector-c
 ```
 
-Homebrew 以 keg-only 方式安装该库。使用 Swift 6.2 / 6.3（Xcode 26.x）时，请先设置：
+Homebrew 以 keg-only 方式安装该库。Swift 6.4 可以直接找到它；使用更早的工具链时（例如 Xcode 26.3 中的 Swift 6.2），请先设置：
 
 ```bash
 export PKG_CONFIG_PATH="$(brew --prefix mariadb-connector-c)/lib/pkgconfig"
@@ -78,9 +78,13 @@ $ pkg-config libmariadb --cflags --libs
 请在您的 Package.swift 文件中增加以下内容：
 
 ```swift
-.package(url: "https://github.com/PerfectlySoft/Perfect-MariaDB.git", from: "4.0.0")
+.package(url: "https://github.com/PerfectlySoft/Perfect-MariaDB.git", from: "4.0.0"),
+.package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", from: "3.0.0"),
 ...
-dependencies: [.product(name: "PerfectMariaDB", package: "Perfect-MariaDB")]),
+dependencies: [
+    .product(name: "PerfectMariaDB", package: "Perfect-MariaDB"),
+    .product(name: "PerfectCRUD", package: "Perfect-CRUD"),
+]),
 ```
 
 库产品名为 `PerfectMariaDB`（与 `PerfectMySQL`、`PerfectPostgreSQL` 一致），模块仍以 `import MariaDB` 导入。**破坏性变更：** 在 3.x 中该产品名为 `MariaDB`，请把 `.product(name: "MariaDB", ...)`（或直接写的 `"MariaDB"`）改为 `.product(name: "PerfectMariaDB", package: "Perfect-MariaDB")`。
