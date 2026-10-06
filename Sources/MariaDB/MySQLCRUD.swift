@@ -448,6 +448,13 @@ class MySQLStmtExeDelegate: SQLExeDelegate, @unchecked Sendable {
     let statement: MySQLStmt
     var results: MySQLStmt.Results?
     let columnMap: MySQLColumnMap
+    /// For the Dynamic API: each column's position and its name, lowercased, keeping only the
+    /// first of the columns whose names differ only by case (or not at all), such as `p.Name`
+    /// and `c.name` in a join. Perfect-CRUD 3.0.0's `DynamicRow.init` traps on a duplicate key.
+    let dynamicColumns: [(index: Int, key: String)]
+    /// Captured right after executing, before the results are read and the statement reset.
+    var affectedRows = 0
+    var insertedID: Int64?
 
     init(connection c: MySQL, stat: MySQLStmt) {
         connection = c
@@ -456,6 +463,43 @@ class MySQLStmtExeDelegate: SQLExeDelegate, @unchecked Sendable {
         let inv = stat.fieldNames()
         inv.forEach { (pos, name) in m[name] = pos }
         columnMap = m
+        var seen = Set<String>()
+        dynamicColumns = inv.keys.sorted().compactMap { index in
+            let key = inv[index]!.lowercased()
+            return seen.insert(key).inserted ? (index, key) : nil
+        }
+    }
+
+    func nextDynamicRow() throws -> DynamicRow? {
+        guard let row = results?.currentRow() else { return nil }
+        var values: [String: DynamicValue] = [:]
+        for (index, key) in dynamicColumns where index < row.count {
+            values[key] = try Self.dynamicValue(row[index], column: key)
+        }
+        return DynamicRow(values)
+    }
+
+    func affectedRowCount() -> Int { affectedRows }
+
+    func lastInsertedID() -> Int64? { insertedID }
+
+    static func dynamicValue(_ value: Any?, column: String) throws -> DynamicValue {
+        switch value {
+        case nil: return .null
+        case let v as Int64: return .int(v)
+        case let v as Int32: return .int(Int64(v))
+        case let v as Int16: return .int(Int64(v))
+        case let v as Int8: return .int(Int64(v))
+        case let v as UInt64: return .uint(v)
+        case let v as UInt32: return .uint(UInt64(v))
+        case let v as UInt16: return .uint(UInt64(v))
+        case let v as UInt8: return .uint(UInt64(v))
+        case let v as Double: return .double(v)
+        case let v as Float: return .double(Double(v))
+        case let v as String: return .string(v)
+        case let v as [UInt8]: return .bytes(v)
+        default: throw MySQLCRUDError("Unsupported value \(String(describing: value)) in column \(column)")
+        }
     }
 
     func bind(_ bindings: Bindings, skip: Int) throws {
@@ -469,6 +513,13 @@ class MySQLStmtExeDelegate: SQLExeDelegate, @unchecked Sendable {
         if nil == results {
             guard statement.execute() else {
                 throw MySQLCRUDError("Error executing statement. \(statement.errorMessage())")
+            }
+            // A statement that returns rows reports no affected rows here ((my_ulonglong)-1 or
+            // a count of rows that haven't been read yet), so only count those that don't.
+            if statement.fieldCount() == 0 {
+                affectedRows = Int(exactly: statement.affectedRows()) ?? 0
+                let id = statement.insertId()
+                insertedID = id == 0 ? nil : Int64(exactly: id)
             }
             results = statement.results()
         }
