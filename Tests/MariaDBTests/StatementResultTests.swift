@@ -74,6 +74,9 @@ struct StatementResultTests {
 		#expect(results.next() == nil)
 		#expect(results.failed)
 		#expect(results.errorCode == 1242, "\(results.errorMessage)")
+		stmt.reset()
+		#expect(stmt.execute())
+		#expect(!stmt.results().forEachRow { _ in })
 		// The connection still works.
 		#expect(try db.sql("SELECT id, NULL AS x FROM a ORDER BY id", Row.self).map(\.id) == [1, 2, 3])
 	}

@@ -486,9 +486,10 @@ public final class MySQLStmt: @unchecked Sendable {
             }
         }
 
+        /// Returns false if reading the rows failed partway (see `failed`).
         public func forEachRow(callback: (Element) -> ()) -> Bool {
             while let row = next() { callback(row) }
-            return true
+            return !failed
         }
 
         func bindToType(_ type: GeneralType) -> MYSQL_BIND {
