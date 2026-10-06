@@ -459,9 +459,13 @@ class MySQLStmtExeDelegate: SQLExeDelegate, @unchecked Sendable {
     init(connection c: MySQL, stat: MySQLStmt) {
         connection = c
         statement = stat
+        // When several columns share a name (`a.id, b.id`), the first one wins. This used to
+        // depend on dictionary order.
         var m = MySQLColumnMap()
         let inv = stat.fieldNames()
-        inv.forEach { (pos, name) in m[name] = pos }
+        for index in inv.keys.sorted() where m[inv[index]!] == nil {
+            m[inv[index]!] = index
+        }
         columnMap = m
         var seen = Set<String>()
         dynamicColumns = inv.keys.sorted().compactMap { index in
