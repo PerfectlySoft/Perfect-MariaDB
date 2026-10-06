@@ -153,6 +153,15 @@ release notes for its changes.
   adds the FOREIGN KEY constraint of a `@ForeignKey` column it adds (the ALTER fails if existing rows violate it), and
   drops a removed `@ForeignKey` column's constraint with the column.
 - **`create()`** creates a table before the sub-tables that reference it, and `.dropTable` drops them in reverse.
+- **Dates are read as UTC:** Perfect-CRUD has always written `Date` values as UTC text, but 3.x parsed them in the
+  process's local time zone, so outside UTC they came back shifted by the UTC offset, and a row whose UTC time fell in
+  a local daylight-saving gap was silently dropped. Dates are now parsed as UTC, and `DATETIME(6)` fractions and `DATE`
+  values are read too (they used to drop the row). Rows written through Perfect-CRUD read back correctly with no
+  migration. What does shift: apps that compensated for the old offset by hand, and local-time values written outside
+  Perfect-CRUD, such as `NOW()` on a server whose time zone isn't UTC, or `TIMESTAMP` columns read in a non-UTC session
+  `time_zone` (run the connection in UTC, e.g. `SET time_zone = '+00:00'`, if you need those to line up). The zero
+  date (`0000-00-00`) reads as nil for an optional `Date`; for a non-optional one it's an error, which Perfect-CRUD's
+  `select()` currently skips the row on.
 - **`connect()`** always passes `CLIENT_REMEMBER_OPTIONS`, so options survive a failed connection attempt.
 
 ## Further Information
