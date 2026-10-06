@@ -107,6 +107,26 @@ struct StatementResultTests {
 		#expect(stmt.results().next()?.count == 3)
 	}
 
+	// DECIMAL values arrive as text; Double and Float properties used to read them as 0.
+	@Test(.mariaLive)
+	func decimalColumnsDecodeIntoFloatingPoint() throws {
+		struct Price: Codable, TableNameProvider {
+			static let tableName = "decimal_price"
+			let id: Int
+			let amount: Double
+			let rate: Float
+			let optional: Double?
+		}
+		let db = try freshDatabase()
+		defer { dropSchema() }
+		try db.sql("CREATE TABLE decimal_price (id INT PRIMARY KEY, amount DECIMAL(12,2), rate DECIMAL(5,3), optional DECIMAL(8,4) NULL)")
+		try db.sql("INSERT INTO decimal_price VALUES (1, 1234.56, 0.125, NULL), (2, -0.50, 2.5, 3.1415)")
+		let prices = try db.table(Price.self).order(by: \.id).select().map { $0 }
+		#expect(prices.map(\.amount) == [1234.56, -0.5])
+		#expect(prices.map(\.rate) == [0.125, 2.5])
+		#expect(prices.map(\.optional) == [nil, 3.1415])
+	}
+
 	// A CALL has no result metadata until it runs, and it ends with an extra status result.
 	// The column maps were built before execute(), so every column read as missing (Codable
 	// threw, Dynamic rows were empty), and the leftover result had to be drained.
