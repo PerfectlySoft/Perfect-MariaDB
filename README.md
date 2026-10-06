@@ -91,6 +91,17 @@ Perfect-MariaDB implements the Perfect-CRUD protocol via `MySQLDatabaseConfigura
 
 Note: the source files retain their original `MySQLCRUD.swift`/`MySQLStmt.swift` naming from this package's shared lineage with [Perfect-MySQL](https://github.com/PerfectlySoft/Perfect-MySQL) — MariaDB is wire-compatible with the MySQL client protocol, and the two packages are separate, independently-buildable connectors in this ecosystem.
 
+### Dynamic queries
+
+Perfect-CRUD's Dynamic API (`select(_: DynamicQuery)`, `mutate(_:)`, `execute(_: DynamicSQL)`) works with this
+connector. Integer columns read as `.int` or `.uint` (unsigned columns), FLOAT/DOUBLE as `.double`, binary values as
+`.bytes`, and everything else, including DECIMAL and date/time columns, as `.string`. Column names are matched ignoring
+case; when a result has several columns whose names differ only by case, or not at all (`p.id, c.id` in a join), the
+row keeps the first, so alias the others. `affectedRows` and `insertedID` are reported for statements that don't
+return rows. A prepared statement holds one statement, so `DynamicSQL` text with several statements fails as a whole,
+unless it starts with a statement that runs unprepared (such as `BEGIN`, or upper-case `CREATE`) on a connection opened with
+`CLIENT_MULTI_STATEMENTS`, in which case every statement runs and an error in any of them is thrown.
+
 ### TLS
 
 Set `MYSQL_OPT_SSL_MODE` before connecting, using MySQL's `SSL_MODE_*` values: 1 = DISABLED, 2 = PREFERRED,
@@ -112,11 +123,13 @@ guard mysql.setOption(.MYSQL_OPT_SSL_MODE, 5) else { fatalError("SSL mode not su
   `MYSQL_OPT_SSL_CA`, the CA on local (loopback or socket) connections.
 - **DISABLED** still uses TLS if any `MYSQL_OPT_SSL_*` file or cipher option is set.
 
-Connector/C 3.4 (Homebrew's current version) verifies the server certificate by default on connections that aren't
-local, even without `MYSQL_OPT_SSL_MODE`: a remote server with a self-signed certificate is refused unless you pass its
-CA with `MYSQL_OPT_SSL_CA` or choose PREFERRED/REQUIRED, which don't verify. Against MariaDB 11.4 and newer, with a
-password, it can instead verify the server's self-signed certificate through a fingerprint derived from the password.
-Connector/C 3.3 (Ubuntu 24.04's `libmariadb-dev`) does neither.
+Connector/C 3.4 (Homebrew's current version) has stricter defaults when `MYSQL_OPT_SSL_MODE` isn't set. It refuses a
+server without TLS ("SSL is required, but the server does not support it"), even on 127.0.0.1; set DISABLED or
+PREFERRED to allow one. On connections that aren't local it also verifies the server certificate, so a remote server
+with a self-signed certificate is refused unless you pass its CA with `MYSQL_OPT_SSL_CA` or choose PREFERRED/REQUIRED,
+which don't verify. Against MariaDB 11.4 and newer, with a password, it can instead verify the server's self-signed
+certificate through a fingerprint derived from the password. Connector/C 3.3 (Ubuntu 24.04's `libmariadb-dev`) does none
+of this.
 
 ## Migrating from 3.x
 
