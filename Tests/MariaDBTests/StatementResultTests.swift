@@ -50,4 +50,31 @@ struct StatementResultTests {
 			#expect(rows == [Pair(id: 1, name: "a")])
 		}
 	}
+
+	// A subquery returning two rows fails with error 1242 while the result is being read.
+	// mysql_stmt_store_result's failure was ignored and mysql_stmt_fetch then crashed inside
+	// libmariadb (SIGSEGV); now the error is thrown and the connection stays usable.
+	@Test(.mariaLive)
+	func errorWhileReadingRowsThrows() throws {
+		let db = try freshDatabase()
+		defer { dropSchema() }
+		try db.sql("CREATE TABLE `a` (`id` INT PRIMARY KEY)")
+		try db.sql("CREATE TABLE `b` (`k` INT, `x` INT)")
+		try db.sql("INSERT INTO `a` VALUES (1), (2), (3)")
+		try db.sql("INSERT INTO `b` VALUES (1, 10), (2, 20), (2, 21)")
+		struct Row: Codable { let id: Int; let x: Int? }
+		let sql = "SELECT id, (SELECT x FROM b WHERE b.k = a.id) AS x FROM a ORDER BY id"
+		#expect(throws: MySQLCRUDError.self) { try db.sql(sql, Row.self) }
+		#expect(throws: MySQLCRUDError.self) { try db.execute(DynamicSQL(sql: sql)) }
+		// The raw statement API reports it too.
+		let stmt = MySQLStmt(db.configuration.connection)
+		#expect(stmt.prepare(statement: sql))
+		#expect(stmt.execute())
+		let results = stmt.results()
+		#expect(results.next() == nil)
+		#expect(results.failed)
+		#expect(results.errorCode == 1242, "\(results.errorMessage)")
+		// The connection still works.
+		#expect(try db.sql("SELECT id, NULL AS x FROM a ORDER BY id", Row.self).map(\.id) == [1, 2, 3])
+	}
 }

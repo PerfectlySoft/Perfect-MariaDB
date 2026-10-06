@@ -4,7 +4,7 @@ import Foundation
 public final class MySQLStmt: @unchecked Sendable {
     private let ptr: UnsafeMutablePointer<MYSQL_STMT>
     /// Keeps the connection alive for as long as the statement: `ptr` belongs to it.
-    private let connection: MySQL
+    let connection: MySQL
     private var paramBinds: UnsafeMutablePointer<MYSQL_BIND>?
     private var paramBindsOffset = 0
     var meta: UnsafeMutablePointer<MYSQL_RES>?
@@ -312,6 +312,24 @@ public final class MySQLStmt: @unchecked Sendable {
         let binds: UnsafeMutablePointer<MYSQL_BIND>
         let lengthBuffers: UnsafeMutablePointer<UInt>
         let isNullBuffers: UnsafeMutablePointer<my_bool>
+        /// True once reading the result failed (the rows couldn't be stored, or a fetch
+        /// returned an error). `next()` then returns nil; `errorCode` and `errorMessage` say why.
+        public private(set) var failed = false
+        /// The error that made reading fail. libmariadb reports an error from storing the rows
+        /// on the connection rather than the statement, so it's captured from whichever has one.
+        public private(set) var errorCode: UInt32 = 0
+        public private(set) var errorMessage = ""
+
+        private func recordFailure() {
+            failed = true
+            if stmt.errorCode() != 0 {
+                errorCode = stmt.errorCode()
+                errorMessage = stmt.errorMessage()
+            } else {
+                errorCode = stmt.connection.errorCode()
+                errorMessage = stmt.connection.errorMessage()
+            }
+        }
 
         init(_ s: MySQLStmt) {
             stmt = s
@@ -322,7 +340,14 @@ public final class MySQLStmt: @unchecked Sendable {
             binds = UnsafeMutablePointer<MYSQL_BIND>.allocate(capacity: numFields)
             lengthBuffers = UnsafeMutablePointer<UInt>.allocate(capacity: numFields)
             isNullBuffers = UnsafeMutablePointer<my_bool>.allocate(capacity: numFields)
-            mysql_stmt_store_result(stmt.ptr)
+            // unbind() reads every bind, including any bind() skips.
+            for i in 0..<numFields { binds.advanced(by: i).initialize(to: MYSQL_BIND()) }
+            // The server can fail partway through the rows (e.g. error 1242, a subquery
+            // returning more than one row). mysql_stmt_fetch on that statement crashes inside
+            // libmariadb, so nothing is fetched after a failed store.
+            if numFields > 0 && mysql_stmt_store_result(stmt.ptr) != 0 {
+                recordFailure()
+            }
             bind()
         }
 
@@ -335,9 +360,17 @@ public final class MySQLStmt: @unchecked Sendable {
 
         public func close() {}
 
+        /// Fetches the next row. False at the end of the rows, or on an error (then `failed`).
         public func fetchRow() -> Bool {
+            guard !failed, numFields > 0 else { return false }
             let fetchRes = mysql_stmt_fetch(stmt.ptr)
-            return fetchRes != MYSQL_NO_DATA && fetchRes != 1
+            if fetchRes == 1 {
+                recordFailure()
+                return false
+            }
+            // MYSQL_DATA_TRUNCATED is expected: string and byte columns are bound with empty
+            // buffers and read afterwards with mysql_stmt_fetch_column.
+            return fetchRes != MYSQL_NO_DATA
         }
 
         public func currentRow() -> [Any?]? {

@@ -528,8 +528,12 @@ class MySQLStmtExeDelegate: SQLExeDelegate, @unchecked Sendable {
             results = statement.results()
         }
         if results?.fetchRow() ?? false { return true }
+        let failure = results.flatMap { $0.failed ? $0.errorMessage : nil }
         statement.reset()
         results = nil
+        if let failure {
+            throw MySQLCRUDError("Error reading results. \(failure)")
+        }
         return false
     }
 
