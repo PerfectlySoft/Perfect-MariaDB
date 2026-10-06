@@ -77,4 +77,64 @@ struct StatementResultTests {
 		// The connection still works.
 		#expect(try db.sql("SELECT id, NULL AS x FROM a ORDER BY id", Row.self).map(\.id) == [1, 2, 3])
 	}
+
+	// A CALL has no result metadata until it runs, and it ends with an extra status result.
+	// The column maps were built before execute(), so every column read as missing (Codable
+	// threw, Dynamic rows were empty), and the leftover result had to be drained.
+	@Test(.mariaLive)
+	func callReturnsRowsAndLeavesTheConnectionUsable() throws {
+		let db = try freshDatabase()
+		defer { dropSchema() }
+		try db.sql("CREATE TABLE `t` (`id` INT PRIMARY KEY, `name` VARCHAR(10))")
+		try db.sql("INSERT INTO `t` VALUES (1, 'one'), (2, 'two'), (3, 'three')")
+		try db.sql("CREATE PROCEDURE `rows_from`(IN lo INT) SELECT id, name FROM t WHERE id >= lo ORDER BY id")
+		try db.sql("CREATE PROCEDURE `two_sets`() BEGIN SELECT id, name FROM t WHERE id = 1; SELECT 9 AS id, 'x' AS name; END")
+
+		#expect(try db.sql("CALL rows_from(?)", bindings: [("?", .integer(2))], Pair.self)
+			== [Pair(id: 2, name: "two"), Pair(id: 3, name: "three")])
+		#expect(try db.sql("SELECT id, name FROM t WHERE id = 1", Pair.self) == [Pair(id: 1, name: "one")])
+
+		let dynamic = try db.execute(DynamicSQL(sql: "CALL rows_from(3)"))
+		#expect(dynamic.rows == [DynamicRow(["id": .int(3), "name": .string("three")])])
+		#expect(try db.sql("SELECT id, name FROM t WHERE id = 2", Pair.self) == [Pair(id: 2, name: "two")])
+
+		// Only the first result set of a multi-result CALL is read; the rest are discarded.
+		#expect(try db.sql("CALL two_sets()", Pair.self) == [Pair(id: 1, name: "one")])
+		#expect(try db.sql("SELECT id, name FROM t WHERE id = 3", Pair.self) == [Pair(id: 3, name: "three")])
+
+		// A CALL run without reading its rows, then more statements, in a transaction.
+		try db.transaction {
+			try db.sql("CALL two_sets()")
+			try db.sql("CALL rows_from(1)")
+			try db.sql("UPDATE t SET name = 'uno' WHERE id = 1")
+		}
+		#expect(try db.sql("SELECT id, name FROM t WHERE id = 1", Pair.self) == [Pair(id: 1, name: "uno")])
+	}
+
+	// MariaDB's INSERT ... RETURNING returns rows from an INSERT.
+	@Test(.mariaLive)
+	func insertReturningReturnsRows() throws {
+		let db = try freshDatabase()
+		defer { dropSchema() }
+		let version = try db.sql("SELECT VERSION() AS v", Version.self).first?.v ?? ""
+		guard version.contains("MariaDB") else { return } // MySQL has no RETURNING
+		try db.sql("CREATE TABLE `r` (`id` INT AUTO_INCREMENT PRIMARY KEY, `name` VARCHAR(10))")
+		let result = try db.execute(DynamicSQL(
+			sql: "INSERT INTO `r` (`name`) VALUES (?), (?) RETURNING id, name",
+			bindings: [.string("a"), .string("b")]))
+		#expect(result.rows == [DynamicRow(["id": .int(1), "name": .string("a")]),
+		                        DynamicRow(["id": .int(2), "name": .string("b")])])
+		#expect(result.affectedRows == 2)
+		#expect(result.insertedID == nil)
+		#expect(try db.sql("INSERT INTO `r` (`name`) VALUES ('c') RETURNING id, name", Pair.self)
+			== [Pair(id: 3, name: "c")])
+		#expect(try count(db) == 3)
+	}
+}
+
+private struct Version: Codable { let v: String }
+
+private func count(_ db: Database<MySQLDatabaseConfiguration>) throws -> Int {
+	struct C: Codable { let c: Int }
+	return try db.sql("SELECT COUNT(*) AS c FROM `r`", C.self)[0].c
 }

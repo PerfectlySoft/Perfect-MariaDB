@@ -447,37 +447,56 @@ class MySQLStmtExeDelegate: SQLExeDelegate, @unchecked Sendable {
     let connection: MySQL
     let statement: MySQLStmt
     var results: MySQLStmt.Results?
-    let columnMap: MySQLColumnMap
+    /// Built after each execute(): a CALL has no result metadata until then.
+    private(set) var columnMap = MySQLColumnMap()
     /// For the Dynamic API: each column's position and its name, lowercased, keeping only the
     /// first of the columns whose names differ only by case (or not at all), such as `p.Name`
     /// and `c.name` in a join. Perfect-CRUD 3.0.0's `DynamicRow.init` traps on a duplicate key.
-    let dynamicColumns: [(index: Int, key: String)]
-    /// Captured right after executing, before the results are read and the statement reset.
+    private(set) var dynamicColumns: [(index: Int, key: String)] = []
+    /// Captured after executing, before the results are read and the statement reset.
     var affectedRows = 0
     var insertedID: Int64?
 
     init(connection c: MySQL, stat: MySQLStmt) {
         connection = c
         statement = stat
+    }
+
+    deinit {
+        // Callers can stop before the rows run out (Database.sql without a type, first(), a
+        // decoding error). Leave the connection ready for the next statement anyway.
+        if results != nil {
+            results = nil
+            statement.discardRemainingResults()
+            statement.reset()
+        }
+    }
+
+    private func buildColumnMaps() {
         // When several columns share a name (`a.id, b.id`), the first one wins. This used to
         // depend on dictionary order.
         var m = MySQLColumnMap()
-        let inv = stat.fieldNames()
-        for index in inv.keys.sorted() where m[inv[index]!] == nil {
-            m[inv[index]!] = index
+        var dynamic: [(index: Int, key: String)] = []
+        var seen = Set<String>()
+        for (index, name) in statement.fieldNames().sorted(by: { $0.key < $1.key }) {
+            if m[name] == nil {
+                m[name] = index
+            }
+            if seen.insert(name.lowercased()).inserted {
+                dynamic.append((index, name.lowercased()))
+            }
         }
         columnMap = m
-        var seen = Set<String>()
-        dynamicColumns = inv.keys.sorted().compactMap { index in
-            let key = inv[index]!.lowercased()
-            return seen.insert(key).inserted ? (index, key) : nil
-        }
+        dynamicColumns = dynamic
     }
 
     func nextDynamicRow() throws -> DynamicRow? {
         guard let row = results?.currentRow() else { return nil }
         var values: [String: DynamicValue] = [:]
-        for (index, key) in dynamicColumns where index < row.count {
+        for (index, key) in dynamicColumns {
+            guard row.indices.contains(index) else {
+                throw MySQLCRUDError("Missing dynamic row value for column \(key).")
+            }
             values[key] = try Self.dynamicValue(row[index], column: key)
         }
         return DynamicRow(values)
@@ -518,19 +537,27 @@ class MySQLStmtExeDelegate: SQLExeDelegate, @unchecked Sendable {
             guard statement.execute() else {
                 throw MySQLCRUDError("Error executing statement. \(statement.errorMessage())")
             }
-            // A statement that returns rows reports no affected rows here ((my_ulonglong)-1 or
-            // a count of rows that haven't been read yet), so only count those that don't.
-            if statement.fieldCount() == 0 {
+            let returnsRows = statement.fieldCount() > 0
+            if !returnsRows {
                 affectedRows = Int(exactly: statement.affectedRows()) ?? 0
                 let id = statement.insertId()
                 insertedID = id == 0 ? nil : Int64(exactly: id)
             }
             results = statement.results()
+            if returnsRows {
+                // For a statement that returns rows (SELECT, CALL, MariaDB's INSERT ... RETURNING)
+                // the count is the number of rows stored, and there's no insert ID to report.
+                affectedRows = Int(exactly: statement.numRows()) ?? 0
+                insertedID = nil
+                buildColumnMaps()
+            }
         }
         if results?.fetchRow() ?? false { return true }
         let failure = results.flatMap { $0.failed ? $0.errorMessage : nil }
-        statement.reset()
         results = nil
+        // Read past any further result sets (a CALL ends with a status result), then reset.
+        statement.discardRemainingResults()
+        statement.reset()
         if let failure {
             throw MySQLCRUDError("Error reading results. \(failure)")
         }

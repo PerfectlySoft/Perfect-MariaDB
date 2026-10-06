@@ -116,7 +116,9 @@ struct DynamicAPITests {
 		#expect(result.affectedRows == 1)
 		result = try db.execute(DynamicSQL(sql: "SELECT * FROM `auto`"))
 		#expect(result.rows.count == 1)
-		#expect(result.affectedRows == 0)
+		// A statement that returns rows reports how many (as Perfect-MySQL does), and no insert ID.
+		#expect(result.affectedRows == 1)
+		#expect(result.insertedID == nil)
 	}
 
 	// Unsigned values bind as unsigned: no Int conversion that could trap or wrap.
