@@ -78,6 +78,32 @@ struct StatementResultTests {
 		#expect(try db.sql("SELECT id, NULL AS x FROM a ORDER BY id", Row.self).map(\.id) == [1, 2, 3])
 	}
 
+	// A statement prepared again gets a bind array sized for the new statement, and one that's
+	// executed, read and reset many times keeps working. (The bind array used to leak on every
+	// parameterized statement; that was checked with `leaks`, which a test can't run.)
+	@Test(.mariaLive)
+	func statementsRebindAfterResetAndReprepare() throws {
+		let db = try freshDatabase()
+		defer { dropSchema() }
+		let stmt = MySQLStmt(db.configuration.connection)
+		for i in 0..<50 {
+			#expect(stmt.prepare(statement: "SELECT ?, ?"))
+			stmt.bindParam(i)
+			stmt.bindParam("x\(i)")
+			#expect(stmt.execute(), "\(stmt.errorMessage())")
+			let row = stmt.results().next()
+			#expect(row?[0] as? Int64 == Int64(i))
+			#expect(row?[1] as? String == "x\(i)")
+			stmt.reset()
+		}
+		#expect(stmt.prepare(statement: "SELECT ?, ?, ?"))
+		stmt.bindParam(1)
+		stmt.bindParam(2)
+		stmt.bindParam(3)
+		#expect(stmt.execute(), "\(stmt.errorMessage())")
+		#expect(stmt.results().next()?.count == 3)
+	}
+
 	// A CALL has no result metadata until it runs, and it ends with an extra status result.
 	// The column maps were built before execute(), so every column read as missing (Codable
 	// threw, Dynamic rows were empty), and the leftover result had to be drained.

@@ -99,13 +99,12 @@ public final class MySQLStmt: @unchecked Sendable {
     }
 
     public func clearBinds() {
-        let count = paramBindsOffset
-        if count > 0, nil != paramBinds {
-            resetBinds()
-            paramBinds?.deallocate()
-            paramBinds = nil
-            paramBindsOffset = 0
-        }
+        // Free the array whenever there is one: reset() zeroes paramBindsOffset, so checking it
+        // here leaked every parameterized statement's bind array.
+        resetBinds()
+        paramBinds?.deallocate()
+        paramBinds = nil
+        paramBindsOffset = 0
     }
 
     public func freeResult() { mysql_stmt_free_result(ptr) }
@@ -116,6 +115,7 @@ public final class MySQLStmt: @unchecked Sendable {
         let utf8Chars = query.utf8
         let r = mysql_stmt_prepare(ptr, query, UInt(utf8Chars.count))
         guard r == 0 else { return false }
+        clearBinds() // a statement prepared again gets a fresh bind array
         if let m = meta { mysql_free_result(m) }
         meta = mysql_stmt_result_metadata(ptr)
         let count = paramCount()
