@@ -55,7 +55,11 @@ struct ListingWildcardTests {
         // Under NO_BACKSLASH_ESCAPES a quote has to be doubled rather than backslashed.
         #expect(mysql.query(statement: "SET SESSION sql_mode = CONCAT(@@sql_mode, ',NO_BACKSLASH_ESCAPES')"), "\(mysql.errorMessage())")
         #expect(mysql.listTables(wildcard: "it's") == ["it's"])
-        #expect(mysql.listTables(wildcard: #"a\_b"#) == ["a_b"])
+        // MariaDB keeps `\` as the LIKE escape character in this mode; MySQL treats it as a
+        // literal character, so `a\_b` matches neither table there.
+        let isMariaDB = mysql.query(statement: "SELECT VERSION()")
+            && (mysql.storeResults()?.next()?[0] ?? nil)?.contains("MariaDB") == true
+        #expect(mysql.listTables(wildcard: #"a\_b"#) == (isMariaDB ? ["a_b"] : []))
         #expect(mysql.query(statement: "SET SESSION sql_mode = DEFAULT"), "\(mysql.errorMessage())")
 
         #expect(mysql.query(statement: "CREATE DATABASE `\(schema)'db`"), "\(mysql.errorMessage())")

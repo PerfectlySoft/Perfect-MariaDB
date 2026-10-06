@@ -181,12 +181,14 @@ public final class MySQL: @unchecked Sendable {
         return mysql_select_db(self.ptr!, namd) == 0
     }
 
-    /// Table names matching an optional LIKE pattern (`%` and `_` are wildcards; `\` escapes them).
+    /// Table names matching an optional LIKE pattern (`%` and `_` are wildcards; `\` escapes them,
+    /// except on a MySQL server in `NO_BACKSLASH_ESCAPES` mode, where it is an ordinary character).
     public func listTables(wildcard wild: String? = nil) -> [String] {
         return listNames("SHOW TABLES", like: wild)
     }
 
-    /// Database names matching an optional LIKE pattern (`%` and `_` are wildcards; `\` escapes them).
+    /// Database names matching an optional LIKE pattern (`%` and `_` are wildcards; `\` escapes them,
+    /// except on a MySQL server in `NO_BACKSLASH_ESCAPES` mode, where it is an ordinary character).
     public func listDatabases(wildcard wild: String? = nil) -> [String] {
         return listNames("SHOW DATABASES", like: wild)
     }
