@@ -2,7 +2,7 @@
 
 <p align="center">
     <img src="https://img.shields.io/badge/Swift-6.2-orange.svg?style=flat" alt="Swift 6.2">
-    <img src="https://img.shields.io/badge/Platforms-macOS%2012%2B-lightgray.svg?style=flat" alt="Platforms macOS 12+">
+    <img src="https://img.shields.io/badge/Platforms-macOS%2012%2B%20%7C%20Linux-lightgray.svg?style=flat" alt="Platforms macOS 12+ | Linux">
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-lightgrey.svg?style=flat" alt="License Apache 2.0"></a>
 </p>
 
@@ -22,25 +22,37 @@ MariaDB target rather than not-yet-in-use or dead code.
 
 The pre-Swift-6 version of this package is preserved on the [`legacy`](../../tree/legacy) branch.
 
-## macOS Build Notes
+## Requirements
 
-`Package.swift` declares `platforms: [.macOS(.v12)]`.
+- Swift 6.2 or newer (`swift-tools-version: 6.2`, Swift 6 language mode).
+- macOS 12 or newer, or Linux. CI builds and tests on macOS (Xcode 26.0.1 and 26.6) and on Ubuntu 24.04
+  (Swift 6.2 and 6.4), with the Linux jobs running the live tests against MariaDB 11.8 and MySQL 8.4.
+- MariaDB Connector/C (libmariadb). It talks to both MariaDB and MySQL servers.
+- [Perfect-CRUD](https://github.com/PerfectlySoft/Perfect-CRUD) 3.0.0 or newer, which SwiftPM fetches for you.
 
-### To install the MariaDB connector:
+### macOS
 
 ```bash
 brew install mariadb-connector-c
 ```
 
-## Linux Build Notes
+Homebrew installs it keg-only (it conflicts with the `mariadb` formula), so it isn't linked into `/opt/homebrew`.
+SwiftPM in Swift 6.4 finds it through the package's Homebrew provider; with Swift 6.2 and 6.3 (Xcode 26.x), point
+pkg-config at it, or the build fails with `'mysql.h' file not found`:
 
-Linux is not declared in the `platforms` array in `Package.swift` (only `.macOS(.v12)` is), so it is not an officially asserted/tested target. That said, the `mariadbclient` system-library target still declares an `.apt(["libmariadb-dev"])` provider, so a Linux build remains possible at the toolchain level if you ensure the library is installed:
+```bash
+export PKG_CONFIG_PATH="$(brew --prefix mariadb-connector-c)/lib/pkgconfig"
+```
+
+Having Homebrew's `mysql-client` installed as well is fine: the package links `libmariadb` only.
+
+### Linux
 
 ```bash
 sudo apt-get install pkg-config libmariadb-dev
 ```
 
-To test if pkg-config is working, try running the command:
+To check that pkg-config finds the library:
 
 ```bash
 pkg-config libmariadb --cflags --libs
@@ -48,12 +60,12 @@ pkg-config libmariadb --cflags --libs
 
 ## Building
 
-Add it to your `Package.swift`. There is no tagged release of the Swift 6 version yet, so depend on `main`:
+Add it to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/PerfectlySoft/Perfect-MariaDB.git", branch: "main"),
-    .package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", branch: "main"),
+    .package(url: "https://github.com/PerfectlySoft/Perfect-MariaDB.git", from: "4.0.0"),
+    .package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", from: "3.0.0"),
 ],
 targets: [
     .target(
@@ -67,9 +79,7 @@ targets: [
 ```
 
 The library product is named `PerfectMariaDB`, matching `PerfectMySQL` and `PerfectPostgreSQL`; the module is still
-imported as `MariaDB`. **Breaking change:** it used to be called `MariaDB`, so if you depended on `main` before this
-rename, change `.product(name: "MariaDB", ...)` (or a bare `"MariaDB"` dependency) to
-`.product(name: "PerfectMariaDB", package: "Perfect-MariaDB")`.
+imported as `MariaDB`.
 
 Import required libraries:
 ```swift
@@ -102,9 +112,35 @@ guard mysql.setOption(.MYSQL_OPT_SSL_MODE, 5) else { fatalError("SSL mode not su
   `MYSQL_OPT_SSL_CA`, the CA on local (loopback or socket) connections.
 - **DISABLED** still uses TLS if any `MYSQL_OPT_SSL_*` file or cipher option is set.
 
-## Testing
+Connector/C 3.4 (Homebrew's current version) verifies the server certificate by default on connections that aren't
+local, even without `MYSQL_OPT_SSL_MODE`: a remote server with a self-signed certificate is refused unless you pass its
+CA with `MYSQL_OPT_SSL_CA` or choose PREFERRED/REQUIRED, which don't verify. Against MariaDB 11.4 and newer, with a
+password, it can instead verify the server's self-signed certificate through a fingerprint derived from the password.
+Connector/C 3.3 (Ubuntu 24.04's `libmariadb-dev`) does neither.
 
-A `MariaDBTests` target and a `docker-compose.yml` (spins up a local MariaDB container) are included for running the test suite against a real server.
+## Migrating from 3.x
+
+The previous release was 3.0.4 (2020). 4.0.0 is a Swift 6 rewrite on Perfect-CRUD 3; see Perfect-CRUD's own
+release notes for its changes.
+
+- **Toolchain and platforms:** Swift 6.2 or newer and macOS 12 or newer. On macOS with Swift 6.2/6.3, set
+  `PKG_CONFIG_PATH` as described above.
+- **Product name:** depend on `.product(name: "PerfectMariaDB", package: "Perfect-MariaDB")` instead of `"MariaDB"`.
+  `import MariaDB` is unchanged.
+- **Binary values are bytes:** through `MySQLStmt`, BINARY, VARBINARY, BIT and GEOMETRY values, binary expressions such
+  as `CAST(x AS BINARY)` or `UNHEX(...)`, and every string column after `SET NAMES binary` are `[UInt8]`, not `String`.
+  Use `String(decoding: bytes, as: UTF8.self)`, or `CAST(... AS CHAR)` in SQL. CRUD models with `String`, `UUID`,
+  `Date` or `URL` properties over such columns still decode.
+- **Text isn't truncated:** values with invalid UTF-8 used to stop at the first bad byte; they now come back in full,
+  with U+FFFD in place of each invalid sequence. `MySQL.Results` gains `nextBytes()`, `forEachRowBytes(callback:)`
+  and `fieldIsBinary(at:)` for exact bytes.
+- **Statements the server can't prepare run directly,** so Perfect-CRUD's nested transactions (`SAVEPOINT`) and
+  `LOCK`/`UNLOCK TABLES` work against MySQL servers. A statement sent this way that returns rows throws.
+- **`.reconcileTable`** no longer drops and re-adds columns whose names have uppercase letters (it lost their data),
+  adds the FOREIGN KEY constraint of a `@ForeignKey` column it adds (the ALTER fails if existing rows violate it), and
+  drops a removed `@ForeignKey` column's constraint with the column.
+- **`create()`** creates a table before the sub-tables that reference it, and `.dropTable` drops them in reverse.
+- **`connect()`** always passes `CLIENT_REMEMBER_OPTIONS`, so options survive a failed connection attempt.
 
 ## Further Information
 For background on the broader Perfect framework, see [perfect.org](http://perfect.org) and [PerfectlySoft/Perfect](https://github.com/PerfectlySoft/Perfect).
@@ -116,8 +152,9 @@ The tests that need a server drop and recreate databases, so they are skipped (a
 otherwise fall back to 3306, which may be a real server. They connect to `127.0.0.1` as `root` with password `123` by
 default; override with `MARIA_TEST_HOST`, `MARIA_TEST_USER` and `MARIA_TEST_PASSWORD`. `MARIA_TEST_HOST=localhost` is
 refused, and so is an empty host, because the client then uses the Unix socket and ignores the port. The foreign-key
-tests also need `MARIA_FK_LIVE_TESTS=1`, and their password defaults to empty rather than `123`. For example, with a
-throwaway MariaDB container on port 3308:
+tests also need `MARIA_FK_LIVE_TESTS=1`, and their password defaults to empty rather than `123`. Two TLS tests need
+more: one a non-loopback `MARIA_TEST_HOST`, the other a server without TLS named by `MARIA_TEST_NOTLS_PORT` (and
+`MARIA_TEST_NOTLS_HOST`). For example, with the throwaway MariaDB container from `docker-compose.yml` on port 3308:
 
 ```sh
 MARIA_TESTS=1 MARIA_TEST_PORT=3308 swift test
