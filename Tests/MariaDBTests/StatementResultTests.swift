@@ -127,6 +127,33 @@ struct StatementResultTests {
 		#expect(prices.map(\.optional) == [nil, 3.1415])
 	}
 
+	// Blob parameters (bindParam([UInt8]), ([Int8]) and (_:length:)) are freed on reset, and a
+	// statement reused with blobs of different sizes, including empty ones, keeps working. (The
+	// buffers used to leak; that was checked with `leaks`, which a test can't run.)
+	@Test(.mariaLive)
+	func blobParametersSurviveResetAndReuse() throws {
+		let db = try freshDatabase()
+		defer { dropSchema() }
+		let stmt = MySQLStmt(db.configuration.connection)
+		for i in 0..<50 {
+			#expect(stmt.prepare(statement: "SELECT ?, ?, ?"))
+			let bytes = [UInt8](repeating: UInt8(i), count: i)
+			stmt.bindParam(bytes)
+			stmt.bindParam([Int8](repeating: 7, count: 50 - i))
+			"abc".withCString { stmt.bindParam($0, length: 3) }
+			#expect(stmt.execute(), "\(stmt.errorMessage())")
+			// MariaDB returns a blob parameter's SELECT as bytes; MySQL 8.4 as text.
+			func asBytes(_ value: Any?) -> [UInt8]? {
+				(value as? [UInt8]) ?? (value as? String).map { Array($0.utf8) }
+			}
+			let row = stmt.results().next()
+			#expect(asBytes(row?[0]) == bytes)
+			#expect(asBytes(row?[1])?.count == 50 - i)
+			#expect(asBytes(row?[2]) == Array("abc".utf8))
+			stmt.reset()
+		}
+	}
+
 	// A CALL has no result metadata until it runs, and it ends with an extra status result.
 	// The column maps were built before execute(), so every column read as missing (Codable
 	// threw, Dynamic rows were empty), and the leftover result had to be drained.
