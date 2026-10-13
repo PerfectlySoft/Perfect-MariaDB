@@ -177,7 +177,9 @@ release notes for its changes.
   `Date.distantPast`, which 3.x stored as `0001-01-01`) read back 2 or more days different. Year 0 is accepted, so
   `Date.distantPast` (`0000-12-30`) round-trips. Fractional seconds are read but not written (whole seconds,
   truncated), and `9999-12-31 23:59:59.999999` no longer turns into year 10000. A `Date` the server can't store
-  (non-finite, or outside years 0–9999) now throws when bound instead of crashing. The zero date (`0000-00-00`) reads
+  (non-finite, or outside years 0–9999) now throws when bound instead of crashing: from `insert`, `update`, `count()`
+  and `sql`. In a `select()` whose `where` compares against such a `Date`, Perfect-CRUD catches the error, logs it and
+  returns no rows. The zero date (`0000-00-00`) reads
   as nil for an optional `Date`; for a non-optional one it's a decoding error. Note that Perfect-CRUD's `select()`
   stops at a row it can't decode and silently drops it and every later row, so any such error loses the rest of the
   result.
