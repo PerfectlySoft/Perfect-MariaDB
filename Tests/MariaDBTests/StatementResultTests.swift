@@ -299,6 +299,43 @@ struct StatementResultTests {
 		#expect(mysql.query(statement: "SELECT 1"), "\(mysql.errorMessage())")
 	}
 
+	// After reset() the parameter buffers are freed, but the client library still holds the old
+	// binds; executing again without rebinding read freed memory. It's now refused.
+	@Test(.mariaLive)
+	func executingWithoutBindingEveryParameterIsRefused() throws {
+		let db = try freshDatabase()
+		defer { dropSchema() }
+		let mysql = db.configuration.connection
+		func int(_ value: Any?) -> Int64? { (value as? any BinaryInteger).map { Int64($0) } }
+		let stmt = MySQLStmt(mysql)
+		try #require(stmt.prepare(statement: "SELECT LENGTH(?) AS l, ? AS s"))
+		stmt.bindParam([UInt8](repeating: 7, count: 4096))
+		stmt.bindParam("hello")
+		try #require(stmt.execute())
+		#expect(int(stmt.results().next()?[0]) == 4096)
+		stmt.reset()
+
+		#expect(!stmt.execute())
+		#expect(stmt.errorCode() == 2031)
+		#expect(stmt.errorMessage().contains("No data supplied"))
+		stmt.bindParam([UInt8](repeating: 1, count: 3))
+		#expect(!stmt.execute(), "one of two parameters bound")
+		stmt.reset()
+
+		stmt.bindParam([UInt8](repeating: 1, count: 3))
+		stmt.bindParam("again")
+		#expect(stmt.execute(), "\(stmt.errorMessage())")
+		#expect(stmt.errorCode() == 0)
+		#expect(int(stmt.results().next()?[0]) == 3)
+
+		let plain = MySQLStmt(mysql) // no parameters: nothing to bind
+		try #require(plain.prepare(statement: "SELECT 1"))
+		#expect(plain.execute())
+		_ = plain.results().next()
+		plain.reset()
+		#expect(plain.execute())
+	}
+
 	// A CALL has no result metadata until it runs, and it ends with an extra status result.
 	// The column maps were built before execute(), so every column read as missing (Codable
 	// threw, Dynamic rows were empty), and the leftover result had to be drained.
