@@ -270,6 +270,35 @@ struct StatementResultTests {
 		#expect(int(row?[7]) == 8)
 	}
 
+	// Re-executing one prepared CALL. With MariaDB Connector/C the cached result metadata
+	// pointed into storage the library replaces on each execution, so reading the second
+	// execution's rows used freed memory (seen under Guard Malloc).
+	@Test(.mariaLive)
+	func aPreparedCallCanBeExecutedRepeatedly() throws {
+		let db = try freshDatabase()
+		defer { dropSchema() }
+		try db.sql("CREATE TABLE items (id INT PRIMARY KEY, name VARCHAR(10))")
+		try db.sql("INSERT INTO items VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+		try db.sql("CREATE PROCEDURE items_from(IN lo INT) SELECT id, name FROM items WHERE id >= lo ORDER BY id")
+		let mysql = db.configuration.connection
+		let stmt = MySQLStmt(mysql)
+		try #require(stmt.prepare(statement: "CALL items_from(?)"))
+		for n in 0..<20 {
+			let low = n % 3 + 1
+			stmt.bindParam(low)
+			try #require(stmt.execute(), "\(n): \(stmt.errorMessage())")
+			#expect(stmt.fieldInfo(index: 1)?.name == "name")
+			let results = stmt.results()
+			var ids: [Int64] = []
+			while let row = results.next() { ids.append((row[0] as? any BinaryInteger).map { Int64($0) } ?? -1) }
+			#expect(ids == Array(Int64(low)...3), "\(n)")
+			stmt.freeResult()
+			while stmt.nextResult() == 0 { stmt.freeResult() }
+			stmt.reset()
+		}
+		#expect(mysql.query(statement: "SELECT 1"), "\(mysql.errorMessage())")
+	}
+
 	// A CALL has no result metadata until it runs, and it ends with an extra status result.
 	// The column maps were built before execute(), so every column read as missing (Codable
 	// threw, Dynamic rows were empty), and the leftover result had to be drained.
