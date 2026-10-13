@@ -167,15 +167,20 @@ release notes for its changes.
   the value, and text that doesn't parse throws.
 - **Dates are read as UTC:** Perfect-CRUD has always written `Date` values as UTC text, but 3.x parsed them in the
   process's local time zone, so outside UTC they came back shifted by the UTC offset, and a row whose UTC time fell in
-  a local daylight-saving gap was silently dropped. Dates are now parsed as UTC, and `DATETIME(6)` fractions and `DATE`
-  values are read too (they used to drop the row). Rows written through Perfect-CRUD read back correctly with no
-  migration. What does shift: apps that compensated for the old offset by hand, and local-time values written outside
-  Perfect-CRUD, such as `NOW()` on a server whose time zone isn't UTC, or `TIMESTAMP` columns read in a non-UTC session
-  `time_zone` (run the connection in UTC, e.g. `SET time_zone = '+00:00'`, if you need those to line up). The zero
-  date (`0000-00-00`) reads as nil for an optional `Date`; for a non-optional one it's an error, which Perfect-CRUD's
-  `select()` currently skips the row on. Dates use the proleptic Gregorian calendar, as the server does, so
-  1582-10-05...14 parse and older dates are no longer 10 or more days off; fractions stay inside their second, and
-  writing truncates to whole seconds (so `9999-12-31 23:59:59.999999` no longer becomes year 10000).
+  a local daylight-saving gap couldn't be decoded. Dates are now parsed as UTC, and `DATETIME(6)` fractions and `DATE`
+  values are read too. Rows written through Perfect-CRUD on or after 1582-10-15 read back correctly with no migration.
+  What does shift: apps that compensated for the old offset by hand; local-time values written outside Perfect-CRUD,
+  such as `NOW()` on a server whose time zone isn't UTC, or `TIMESTAMP` columns read in a non-UTC session `time_zone`
+  (run the connection in UTC, e.g. `SET time_zone = '+00:00'`, if you need those to line up); and dates before
+  1582-10-15 that 3.x wrote. Dates now use the proleptic Gregorian calendar, as the server does, while 3.x used
+  Foundation's Julian-before-1582 calendar for both writing and reading, so those older values (including
+  `Date.distantPast`, which 3.x stored as `0001-01-01`) read back 2 or more days different. Year 0 is accepted, so
+  `Date.distantPast` (`0000-12-30`) round-trips. Fractional seconds are read but not written (whole seconds,
+  truncated), and `9999-12-31 23:59:59.999999` no longer turns into year 10000. A `Date` the server can't store
+  (non-finite, or outside years 0–9999) now throws when bound instead of crashing. The zero date (`0000-00-00`) reads
+  as nil for an optional `Date`; for a non-optional one it's a decoding error. Note that Perfect-CRUD's `select()`
+  stops at a row it can't decode and silently drops it and every later row, so any such error loses the rest of the
+  result.
 - **CALL rows are readable:** `db.sql("CALL p(?)", bindings: ..., T.self)` and Dynamic queries return the procedure's
   rows (in 3.x every column read as missing). Only the first result set is read; the others are discarded, so the
   connection stays in sync. If a later statement in the procedure fails, the typed and Dynamic calls throw. An untyped
