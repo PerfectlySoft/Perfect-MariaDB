@@ -181,14 +181,35 @@ public final class MySQL: @unchecked Sendable {
         return mysql_select_db(self.ptr!, namd) == 0
     }
 
+    /// Character sets in which the second byte of a multibyte character can be `\` (0x5C).
+    static let backslashUnsafeCharsets: Set<String> = ["big5", "cp932", "gbk", "gb18030", "sjis"]
+
+    /// Whether `wild` is refused by listTables / listDatabases: under big5, cp932, gbk, gb18030
+    /// or sjis, a wildcard with a byte >= 0x80 that also contains `'` or `\`. A backslash put
+    /// before that `'` can become the second byte of a multibyte character, so the `'` ends the
+    /// string literal. Oracle's mysql_list_tables escapes byte by byte without regard to the
+    /// charset, and libmariadb's mysql_real_escape_string gets big5 wrong on x86_64. The charset
+    /// is the one the client library knows: set it with MYSQL_SET_CHARSET_NAME, not with a
+    /// `SET NAMES` query, which it may not see.
+    func listingWildcardIsUnsafe(_ wild: String?) -> Bool {
+        guard let wild, let name = mysql_character_set_name(self.ptr!),
+              Self.backslashUnsafeCharsets.contains(String(cString: name).lowercased()) else {
+            return false
+        }
+        let bytes = wild.utf8
+        return bytes.contains { $0 >= 0x80 } && bytes.contains { $0 == UInt8(ascii: "'") || $0 == UInt8(ascii: "\\") }
+    }
+
     /// Table names matching an optional LIKE pattern (`%` and `_` are wildcards; `\` escapes them,
     /// except on a MySQL server in `NO_BACKSLASH_ESCAPES` mode, where it is an ordinary character).
+    /// Returns [] on an error, and for a wildcard refused by `listingWildcardIsUnsafe`.
     public func listTables(wildcard wild: String? = nil) -> [String] {
         return listNames("SHOW TABLES", like: wild)
     }
 
     /// Database names matching an optional LIKE pattern (`%` and `_` are wildcards; `\` escapes them,
     /// except on a MySQL server in `NO_BACKSLASH_ESCAPES` mode, where it is an ordinary character).
+    /// Returns [] on an error, and for a wildcard refused by `listingWildcardIsUnsafe`.
     public func listDatabases(wildcard wild: String? = nil) -> [String] {
         return listNames("SHOW DATABASES", like: wild)
     }
@@ -202,12 +223,17 @@ public final class MySQL: @unchecked Sendable {
     // with MYSQL_SET_CHARSET_NAME instead.) It's built as bytes: under a charset other than
     // UTF-8 the escaped pattern needn't be valid UTF-8.
     private func listNames(_ show: String, like wild: String?) -> [String] {
+        guard !listingWildcardIsUnsafe(wild) else {
+            return []
+        }
         var query = Array(show.utf8)
-        if let wild = wild {
+        if let wild {
             let from = Array(wild.utf8).map { CChar(bitPattern: $0) } + [0]
             var escaped = [CChar](repeating: 0, count: (from.count - 1) * 2 + 1)
             let length = mysql_real_escape_string(self.ptr!, &escaped, from, UInt(from.count - 1))
-            guard length != UInt.max else { return [] }
+            guard length != UInt.max else {
+                return []
+            }
             query += Array(" LIKE '".utf8)
             query += escaped[0..<Int(length)].map { UInt8(bitPattern: $0) }
             query.append(UInt8(ascii: "'"))
@@ -215,14 +241,14 @@ public final class MySQL: @unchecked Sendable {
         let status = query.withUnsafeBufferPointer { buffer in
             buffer.withMemoryRebound(to: CChar.self) { mysql_real_query(self.ptr!, $0.baseAddress, UInt($0.count)) }
         }
-        guard status == 0, let res = mysql_store_result(self.ptr!) else { return [] }
+        guard status == 0, let res = mysql_store_result(self.ptr!) else {
+            return []
+        }
         var result = [String]()
-        var row = mysql_fetch_row(res)
-        while row != nil {
-            if let namePtr = row![0] {
-                result.append(String(cString: namePtr))
+        while let row = mysql_fetch_row(res) {
+            if let namePtr = row[0] {
+                result.append(String(validatingCString: namePtr) ?? "")
             }
-            row = mysql_fetch_row(res)
         }
         mysql_free_result(res)
         return result

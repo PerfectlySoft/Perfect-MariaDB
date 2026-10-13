@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import MariaDB
+import mariadbclient
 
 // MARK: - listTables(wildcard:) / listDatabases(wildcard:)
 //
@@ -69,15 +70,19 @@ struct ListingWildcardTests {
 
     // On main the DROP ran: "SHOW TABLES LIKE 'x'; DROP TABLE wild_victim; -- '". Under gbk the
     // escaping has to follow the connection's charset: 中 is E4 B8 AD in UTF-8, and AD followed
-    // by the backslash that escapes the quote is one gbk character.
-    @Test(.mariaLive, arguments: ["utf8mb4", "gbk", "big5"])
+    // by the backslash that escapes the quote is one gbk character. Under big5 on x86_64,
+    // libmariadb 3.3's mysql_real_escape_string turned E4 B8 AD 27 into E4 B8 AD 5C 27, so the
+    // DROP ran even with escaping; wildcards like that are now refused under the five charsets
+    // where 0x5C can be a trail byte.
+    @Test(.mariaLive, arguments: ["utf8mb4", "latin1", "gbk", "big5", "cp932", "sjis", "gb18030"])
     func wildcardCannotRunAnotherStatement(charset: String) throws {
         let setup = freshSchema()
         defer { setup.close(); dropSchema() }
         let listings: [(String, (MySQL, String) -> [String])] = [
             ("listTables", { $0.listTables(wildcard: $1) }),
             ("listDatabases", { $0.listDatabases(wildcard: $1) })]
-        for wildcard in ["x'; DROP TABLE wild_victim; -- ", "中'; DROP TABLE wild_victim; -- "] {
+        for wildcard in ["x'; DROP TABLE wild_victim; -- ", "中'; DROP TABLE wild_victim; -- ",
+                         "中\\'; DROP TABLE wild_victim; -- ", "ｱ'; DROP TABLE wild_victim; -- "] {
             for (name, list) in listings {
                 #expect(setup.query(statement: "CREATE TABLE IF NOT EXISTS `wild_victim` (id INT)"), "\(setup.errorMessage())")
                 let mysql = connect(charset: charset, flag: clientMultiStatements)
@@ -89,5 +94,39 @@ struct ListingWildcardTests {
                 #expect(setup.listTables(wildcard: "wild_victim") == ["wild_victim"], "\(name) \(charset) \(wildcard)")
             }
         }
+    }
+
+    // The refusal applies only where it's needed: a byte >= 0x80 together with `'` or `\`, under
+    // big5, cp932, gbk, gb18030 or sjis.
+    @Test(.mariaLive)
+    func unsafeWildcardsAreRefusedOnlyUnderTrailByteCharsets() throws {
+        for charset in ["big5", "cp932", "gbk", "gb18030", "sjis"] {
+            let mysql = connect(charset: charset)
+            defer { mysql.close() }
+            // MariaDB 11.8 has no gb18030; the client then stays on its default (utf8mb4), where
+            // nothing needs refusing.
+            let actual = String(cString: mysql_character_set_name(mysql.ptr!))
+            #expect(mysql.listingWildcardIsUnsafe("中'") == (actual == charset), "\(charset), client charset \(actual)")
+            #expect(mysql.listingWildcardIsUnsafe("中\\") == (actual == charset), "\(charset), client charset \(actual)")
+            #expect(!mysql.listingWildcardIsUnsafe("中%"), "\(charset)")
+            #expect(!mysql.listingWildcardIsUnsafe("it's"), "\(charset)")
+            #expect(!mysql.listingWildcardIsUnsafe(#"a\_b"#), "\(charset)")
+            #expect(!mysql.listingWildcardIsUnsafe(nil), "\(charset)")
+        }
+        for charset in ["utf8mb4", "latin1"] {
+            let mysql = connect(charset: charset)
+            defer { mysql.close() }
+            #expect(!mysql.listingWildcardIsUnsafe("中'"), "\(charset)")
+            #expect(!mysql.listingWildcardIsUnsafe("中\\"), "\(charset)")
+        }
+        // Ordinary wildcards still work under such a charset.
+        let setup = freshSchema()
+        defer { setup.close(); dropSchema() }
+        #expect(setup.query(statement: "CREATE TABLE `it's` (id INT)"), "\(setup.errorMessage())")
+        let big5 = connect(charset: "big5")
+        defer { big5.close() }
+        #expect(big5.selectDatabase(named: schema))
+        #expect(big5.listTables(wildcard: "it's") == ["it's"])
+        #expect(big5.listTables(wildcard: "it%") == ["it's"])
     }
 }
