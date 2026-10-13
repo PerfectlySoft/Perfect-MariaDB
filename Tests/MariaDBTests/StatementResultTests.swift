@@ -339,6 +339,53 @@ struct StatementResultTests {
 		#expect(plain.execute())
 	}
 
+	// Binding more values than a statement has parameters wrote past the bind array (SIGSEGV
+	// through Perfect-CRUD, even with the system allocator). The extra values are now refused with
+	// error 2034, and execute() refuses until the statement is reset and bound correctly.
+	@Test(.mariaLive)
+	func bindingTooManyParametersIsRefused() throws {
+		struct X: Codable { let x: Int }
+		let db = try freshDatabase()
+		defer { dropSchema() }
+		#expect(throws: (any Error).self) {
+			_ = try db.sql("SELECT ? AS x", bindings: [("?", .integer(1)), ("?", .string("two")), ("?", .blob([3]))], X.self)
+		}
+		#expect(try db.sql("SELECT ? AS x", bindings: [("?", .integer(4))], X.self).map(\.x) == [4])
+
+		let mysql = db.configuration.connection
+		let stmt = MySQLStmt(mysql)
+		try #require(stmt.prepare(statement: "SELECT ? AS x"))
+		stmt.bindParam(1)
+		stmt.bindParam("x")
+		stmt.bindParam([UInt8](repeating: 1, count: 64))
+		stmt.bindParam()
+		#expect(stmt.errorCode() == 2034)
+		#expect(!stmt.execute())
+		#expect(stmt.errorCode() == 2034)
+		stmt.reset()
+		stmt.bindParam(5)
+		#expect(stmt.execute(), "\(stmt.errorMessage())")
+		#expect((stmt.results().next()?[0] as? any BinaryInteger).map { Int64($0) } == 5)
+		stmt.reset()
+
+		// A stray value on a statement without parameters doesn't stick after reset().
+		let plain = MySQLStmt(mysql)
+		try #require(plain.prepare(statement: "SELECT 1"))
+		plain.bindParam(1)
+		#expect(!plain.execute())
+		plain.reset()
+		#expect(plain.execute(), "\(plain.errorMessage())")
+		_ = plain.results().next()
+
+		// After a failed prepare, execute() reports the library's error, not 2031.
+		let broken = MySQLStmt(mysql)
+		try #require(broken.prepare(statement: "SELECT ? AS x"))
+		broken.bindParam(1)
+		#expect(!broken.prepare(statement: "SELEC nonsense"))
+		#expect(!broken.execute())
+		#expect(broken.errorCode() != 2031, "\(broken.errorCode()) \(broken.errorMessage())")
+	}
+
 	// A CALL has no result metadata until it runs, and it ends with an extra status result.
 	// The column maps were built before execute(), so every column read as missing (Codable
 	// threw, Dynamic rows were empty), and the leftover result had to be drained.
