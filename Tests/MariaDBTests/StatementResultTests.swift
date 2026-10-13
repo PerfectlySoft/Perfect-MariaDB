@@ -154,6 +154,30 @@ struct StatementResultTests {
 		}
 	}
 
+	// Reusing a statement (execute, read results, reset, execute again) corrupted the heap with
+	// libmysqlclient: the client library kept pointers into the freed Results' buffers and wrote
+	// through them on the next execute (Perfect-MySQL 376a1c3).
+	@Test(.mariaLive)
+	func aStatementCanBeReusedAfterReadingResults() throws {
+		let db = try freshDatabase()
+		defer { dropSchema() }
+		let stmt = MySQLStmt(db.configuration.connection)
+		try #require(stmt.prepare(statement: "SELECT CAST(? AS SIGNED) AS n, ? * 1.5 AS d, CONCAT('v', ?) AS s, LENGTH(?) AS l"))
+		for n in 0..<300 {
+			stmt.bindParam(n)
+			stmt.bindParam(Double(n))
+			stmt.bindParam("\(n)")
+			stmt.bindParam([UInt8](repeating: 1, count: n % 9))
+			try #require(stmt.execute(), "\(n): \(stmt.errorMessage())")
+			let row = stmt.results().next()
+			#expect(row?[0] as? Int64 == Int64(n))
+			#expect(row?[2] as? String == "v\(n)")
+			// LENGTH() is an INT on MariaDB and a BIGINT on MySQL.
+			#expect((row?[3] as? any BinaryInteger).map { Int64($0) } == Int64(n % 9))
+			stmt.reset()
+		}
+	}
+
 	// A CALL has no result metadata until it runs, and it ends with an extra status result.
 	// The column maps were built before execute(), so every column read as missing (Codable
 	// threw, Dynamic rows were empty), and the leftover result had to be drained.
