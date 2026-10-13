@@ -187,8 +187,17 @@ release notes for its changes.
   `db.sql("CALL p()")` can't report such an error, because Perfect-CRUD only starts the statement there; read the rows
   with a type (or use `execute(DynamicSQL)`) when the procedure can fail after its first result set.
 - **`MySQLOpt` has a new case,** `MYSQL_OPT_SSL_MODE`, so an exhaustive `switch` over `MySQLOpt` needs a case for it.
-- **`listTables` / `listDatabases`** escape their wildcard, and under big5, cp932, gbk, gb18030 or sjis refuse (return
-  `[]` for) a wildcard with a non-ASCII byte and a `'` or `\`, which escaping can't make safe there.
+- **`listTables` / `listDatabases` wildcards** can't end the string literal any more. In 3.x libmariadb pasted the
+  wildcard into `SHOW ... LIKE '...'` unescaped, so with `CLIENT_MULTI_STATEMENTS` the rest of it ran as SQL. Now a
+  `'` in the wildcard is doubled (which works whatever the server's `NO_BACKSLASH_ESCAPES` mode), the rest is escaped
+  by the client library, and some wildcards are refused (the result is `[]`): one with both `'` and `\`, and, under
+  big5, cp932, gbk, gb18030 or sjis, one with a non-ASCII byte and a `'` or `\`. Wildcards keep working under
+  `NO_BACKSLASH_ESCAPES`. The charset checked is the one set with `MYSQL_SET_CHARSET_NAME`.
+- **Statements can be reused safely:** a `MySQLStmt.Results` that's replaced by a newer one (`r = stmt.results()`), or
+  outlives `nextResult()` or a re-prepare, no longer disturbs the statement's current result, and re-executing a
+  prepared `CALL` no longer reads freed metadata. `execute()` now returns false (error 2031, `CR_PARAMS_NOT_BOUND`)
+  unless every parameter has been bound since the last `reset()`; re-executing with the old binds read freed memory.
+  Blob parameters (`[UInt8]`, `[Int8]`, `bindParam(_:length:)`) and the parameter array no longer leak.
 - **`[Int8]` properties** read negative bytes instead of trapping (writing them needs Perfect-CRUD 3.0.1).
 - **`connect()`** always passes `CLIENT_REMEMBER_OPTIONS`, so options survive a failed connection attempt.
 
