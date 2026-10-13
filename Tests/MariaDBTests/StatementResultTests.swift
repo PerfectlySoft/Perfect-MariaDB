@@ -197,6 +197,79 @@ struct StatementResultTests {
 		#expect(read.map(\.bytes) == written.map(\.bytes))
 	}
 
+	// Replacing a Results with a newer one releases the older one after the newer has bound.
+	// The older one's cleanup used to detach the newer one's binds, so it read 0 / "".
+	@Test(.mariaLive)
+	func reassigningAResultsVariableKeepsTheNewOneBound() throws {
+		let db = try freshDatabase()
+		defer { dropSchema() }
+		let stmt = MySQLStmt(db.configuration.connection)
+		try #require(stmt.prepare(statement: "SELECT CAST(? AS SIGNED) AS n, CONCAT('v', ?) AS s, ? * 2.5 AS d"))
+		stmt.bindParam(0)
+		stmt.bindParam("0")
+		stmt.bindParam(0.0)
+		try #require(stmt.execute())
+		var results = stmt.results()
+		_ = results.next()
+		for n in 1...50 {
+			stmt.reset()
+			stmt.bindParam(n)
+			stmt.bindParam("\(n)")
+			stmt.bindParam(Double(n))
+			try #require(stmt.execute(), "\(stmt.errorMessage())")
+			results = stmt.results()
+			let row = results.next()
+			#expect(row?[0] as? Int64 == Int64(n))
+			#expect(row?[1] as? String == "v\(n)")
+			#expect(row?[2] as? Double == Double(n) * 2.5)
+		}
+	}
+
+	// Walking a CALL's result sets with one variable, and keeping an older Results alive while
+	// the statement moves to a wider result set or is prepared again with more columns. The
+	// older one's cleanup used to bind as many binds as it had columns while the library copied
+	// the current column count, reading past the allocation.
+	@Test(.mariaLive)
+	func olderResultsDontDisturbLaterResultSets() throws {
+		let db = try freshDatabase()
+		defer { dropSchema() }
+		try db.sql("CREATE PROCEDURE three_sets() BEGIN SELECT 1 AS a, 'x' AS b; SELECT 2 AS a, 'y' AS b, 0 AS c; SELECT 3 AS a, 'z' AS b; END")
+		let mysql = db.configuration.connection
+		let call = MySQLStmt(mysql)
+		try #require(call.prepare(statement: "CALL three_sets()"))
+		func int(_ value: Any?) -> Int64 { (value as? any BinaryInteger).map { Int64($0) } ?? -1 }
+		for _ in 0..<3 {
+			try #require(call.execute(), "\(call.errorMessage())")
+			var results = call.results()
+			var got: [String] = []
+			while true {
+				while let row = results.next() {
+					got.append("\(int(row[0]))/\(row[1] as? String ?? "nil")")
+				}
+				call.freeResult()
+				guard call.nextResult() == 0, call.fieldCount() > 0 else { break }
+				results = call.results()
+			}
+			#expect(got == ["1/x", "2/y", "3/z"])
+			while call.nextResult() == 0 {}
+			call.reset()
+		}
+
+		let stmt = MySQLStmt(mysql)
+		try #require(stmt.prepare(statement: "SELECT 1 AS a"))
+		try #require(stmt.execute())
+		var older: MySQLStmt.Results? = stmt.results()
+		_ = older?.next()
+		stmt.freeResult()
+		try #require(stmt.prepare(statement: "SELECT 1 AS a, 2 AS b, 3 AS c, 4 AS d, 5 AS e, 6 AS f, 7 AS g, 8 AS h"))
+		try #require(stmt.execute())
+		older = nil
+		#expect(older == nil)
+		let row = stmt.results().next()
+		#expect(row?.count == 8)
+		#expect(int(row?[7]) == 8)
+	}
+
 	// A CALL has no result metadata until it runs, and it ends with an extra status result.
 	// The column maps were built before execute(), so every column read as missing (Codable
 	// threw, Dynamic rows were empty), and the leftover result had to be drained.
