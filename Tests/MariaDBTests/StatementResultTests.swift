@@ -363,7 +363,9 @@ struct StatementResultTests {
 		#expect(!stmt.execute())
 		#expect(stmt.errorCode() == 2034)
 		stmt.reset()
+		#expect(stmt.errorCode() == 0, "a 2034 doesn't outlive reset()")
 		stmt.bindParam(5)
+		#expect(stmt.errorCode() == 0)
 		#expect(stmt.execute(), "\(stmt.errorMessage())")
 		#expect((stmt.results().next()?[0] as? any BinaryInteger).map { Int64($0) } == 5)
 		stmt.reset()
@@ -377,7 +379,17 @@ struct StatementResultTests {
 		#expect(plain.execute(), "\(plain.errorMessage())")
 		_ = plain.results().next()
 
-		// After a failed prepare, execute() reports the library's error, not 2031.
+		// After clearBinds() on a prepared statement there's no array: values are refused, and
+		// execute() says so (2034) rather than failing with no error.
+		let cleared = MySQLStmt(mysql)
+		try #require(cleared.prepare(statement: "SELECT ? AS x"))
+		cleared.clearBinds()
+		cleared.bindParam(1)
+		#expect(!cleared.execute())
+		#expect(cleared.errorCode() == 2034, "\(cleared.errorCode()) \(cleared.errorMessage())")
+
+		// After a failed prepare, execute() fails with the library's error (2014 on MariaDB
+		// Connector/C), not 2031.
 		let broken = MySQLStmt(mysql)
 		try #require(broken.prepare(statement: "SELECT ? AS x"))
 		broken.bindParam(1)

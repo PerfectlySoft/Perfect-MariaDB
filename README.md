@@ -199,6 +199,9 @@ release notes for its changes.
   outlives `nextResult()` or a re-prepare, no longer disturbs the statement's current result, and re-executing a
   prepared `CALL` no longer reads freed metadata. `execute()` now returns false (error 2031, `CR_PARAMS_NOT_BOUND`)
   unless every parameter has been bound since the last `reset()`; re-executing with the old binds read freed memory.
+  Binding more values than the statement has parameters, which wrote past the bind array and crashed (also through
+  `db.sql(_:bindings:)`), is refused: `bindParam` sets `errorCode()` to 2034 (`CR_INVALID_PARAMETER_NO`) and doesn't
+  store the value, and `execute()` returns false with 2034 until `reset()`.
   Blob parameters (`[UInt8]`, `[Int8]`, `bindParam(_:length:)`) and the parameter array no longer leak.
 - **`[Int8]` properties** read negative bytes instead of trapping (and Perfect-CRUD 3.0.1, now the minimum, writes them).
 - **`connect()`** always passes `CLIENT_REMEMBER_OPTIONS`, so options survive a failed connection attempt.

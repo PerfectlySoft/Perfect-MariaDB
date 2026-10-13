@@ -113,6 +113,7 @@ public final class MySQLStmt: @unchecked Sendable {
             }
         }
         paramBindsOffset = 0
+        wrapperError = nil // a 2034 from binding too many values doesn't outlive the values
     }
 
     public func clearBinds() {
@@ -146,7 +147,8 @@ public final class MySQLStmt: @unchecked Sendable {
         let utf8Chars = query.utf8
         let r = mysql_stmt_prepare(ptr, query, UInt(utf8Chars.count))
         // A statement prepared again gets a fresh bind array. After a failed prepare there's no
-        // statement to bind to, and execute() then reports the library's error.
+        // statement to bind to, and execute() then fails with the library's own error (on MariaDB
+        // Connector/C that's 2014, "Commands out of sync"), not this wrapper's 2031.
         clearBinds()
         guard r == 0 else { return false }
         if let m = meta { mysql_free_result(m) }
@@ -167,10 +169,12 @@ public final class MySQLStmt: @unchecked Sendable {
         // reset() has freed. Executing again without binding every parameter would make it read
         // them (a use-after-free), so refuse, with libmysqlclient's own error for this case.
         let count = paramCount()
-        guard paramBindsOffset == count else {
-            wrapperError = paramBindsOffset > count
-                ? (2034, "Invalid parameter number") // CR_INVALID_PARAMETER_NO: too many values bound
-                : (2031, "No data supplied for parameters in prepared statement") // CR_PARAMS_NOT_BOUND
+        // paramBindsOffset <= paramBindsCapacity: after clearBinds() on a prepared statement every
+        // value is refused (there's no array), so the count can match without anything stored.
+        guard paramBindsOffset == count, paramBindsOffset <= paramBindsCapacity else {
+            wrapperError = paramBindsOffset < count
+                ? (2031, "No data supplied for parameters in prepared statement") // CR_PARAMS_NOT_BOUND
+                : (2034, "Invalid parameter number") // CR_INVALID_PARAMETER_NO: values that weren't stored
             return false
         }
         if paramBindsOffset > 0 {
