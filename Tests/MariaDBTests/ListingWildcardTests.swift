@@ -187,5 +187,50 @@ struct ListingWildcardTests {
             #expect(setup.listTables(wildcard: "victim") == ["victim"], "\(routine) \(payload)")
         }
     }
+
+    /// Runs `sql` and reads every result (a CALL returns several).
+    static func run(_ mysql: MySQL, _ sql: String) throws {
+        try #require(mysql.query(statement: sql), "\(sql): \(mysql.errorMessage())")
+        _ = mysql.storeResults()
+        while mysql.moreResults() {
+            _ = mysql.nextResult()
+            _ = mysql.storeResults()
+        }
+    }
+
+    // Perfect-MySQL's test for the same fix (5c9c5fd), adapted: four stale-bit setups, each with
+    // `x'...`, `x\'...` and a trailing `\`; the connection must stay in sync, and vic% must
+    // still match.
+    @Test(.mariaLive, arguments: ["utf8mb4", "latin1", "big5"])
+    func aStaleNoBackslashEscapesBitCannotEndTheLiteral(charset: String) throws {
+        let setup = freshSchema()
+        defer { setup.close(); dropSchema() }
+        try Self.run(setup, "CREATE TABLE victim (i INT)")
+        try Self.run(setup, "CREATE TABLE `it's` (i INT)")
+        let mysql = connect(charset: charset, flag: clientMultiStatements)
+        defer { mysql.close() }
+        #expect(mysql.selectDatabase(named: schema))
+        try Self.run(mysql, "CREATE PROCEDURE clear_mode() SET SESSION sql_mode = ''")
+        try Self.run(mysql, "CREATE PROCEDURE set_nbe() SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'")
+        try Self.run(mysql, "CREATE FUNCTION nbe_fn() RETURNS INT DETERMINISTIC BEGIN SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'; RETURN 1; END")
+        let payloads = ["x'; DROP TABLE victim; -- ", "x\\'; DROP TABLE victim; -- ", "x\\"]
+        let setups: [[String]] = [
+            ["SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'", "CALL clear_mode()"],
+            ["SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'", "CALL clear_mode()", "DO 1"],
+            ["SET SESSION sql_mode = ''", "CALL set_nbe()"],
+            ["SET SESSION sql_mode = ''", "SELECT nbe_fn()", "DO 1"],
+        ]
+        for steps in setups {
+            for payload in payloads {
+                for sql in steps { try Self.run(mysql, sql) }
+                #expect(mysql.listTables(wildcard: payload).isEmpty, "\(charset) \(steps)")
+                #expect(mysql.query(statement: "SELECT 1"), "\(charset) \(steps): \(mysql.errorMessage())")
+                _ = mysql.storeResults()
+            }
+            for sql in steps { try Self.run(mysql, sql) }
+            #expect(mysql.listTables(wildcard: "vic%") == ["victim"], "\(charset) \(steps)")
+            #expect(mysql.listTables(wildcard: "it_s") == ["it's"], "\(charset) \(steps)")
+        }
+    }
 }
 

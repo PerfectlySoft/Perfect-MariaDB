@@ -202,30 +202,37 @@ public final class MySQL: @unchecked Sendable {
 
     /// Table names matching an optional LIKE pattern (`%` and `_` are wildcards; `\` escapes them,
     /// except on a MySQL server in `NO_BACKSLASH_ESCAPES` mode, where it is an ordinary character).
-    /// Returns [] on an error, for a wildcard refused by `listingWildcardIsUnsafe`, and for a
-    /// wildcard containing both `'` and `\`.
+    /// Returns [] on an error, and for a refused wildcard: one containing both `'` and `\`, or one
+    /// refused by `listingWildcardIsUnsafe`.
     public func listTables(wildcard wild: String? = nil) -> [String] {
         return listNames("SHOW TABLES", like: wild)
     }
 
     /// Database names matching an optional LIKE pattern (`%` and `_` are wildcards; `\` escapes them,
     /// except on a MySQL server in `NO_BACKSLASH_ESCAPES` mode, where it is an ordinary character).
-    /// Returns [] on an error, for a wildcard refused by `listingWildcardIsUnsafe`, and for a
-    /// wildcard containing both `'` and `\`.
+    /// Returns [] on an error, and for a refused wildcard: one containing both `'` and `\`, or one
+    /// refused by `listingWildcardIsUnsafe`.
     public func listDatabases(wildcard wild: String? = nil) -> [String] {
         return listNames("SHOW DATABASES", like: wild)
     }
 
-    // libmariadb's mysql_list_tables / mysql_list_dbs paste the wildcard into
-    // "SHOW ... LIKE '%s'" without escaping it (and cut it off at 255 bytes), so a `'` in it
-    // ended the string literal. The query is built here instead. A `'` is doubled by hand (and a
-    // wildcard with both `'` and `\` refused); anything else is escaped by mysql_real_escape_string,
-    // which follows the connection's character set and the NO_BACKSLASH_ESCAPES mode as libmariadb
-    // last saw them. That mode bit can be stale after a stored routine changes sql_mode, which is
-    // why quotes aren't left to it. (A `SET NAMES` the client doesn't see, such as with
-    // session_track_system_variables off, isn't followed: set the charset with
-    // MYSQL_SET_CHARSET_NAME instead.) It's built as bytes: under a charset other than UTF-8 the
-    // escaped pattern needn't be valid UTF-8.
+    // mysql_list_tables / mysql_list_dbs aren't used: libmariadb's paste the wildcard into
+    // "SHOW ... LIKE '%s'" without escaping it at all (and cut it off at 255 bytes), so a `'`
+    // ended the string literal on a Connector/C build, and Oracle's escape byte by byte (see
+    // listingWildcardIsUnsafe). The literal is built here, as bytes (under a charset other than
+    // UTF-8 the result needn't be valid UTF-8), so that nothing depends on knowing the server's
+    // NO_BACKSLASH_ESCAPES mode. The client library's escaping functions take that mode from a
+    // status bit that goes stale after a stored routine changes sql_mode, and then a `'` came out
+    // as `\'` on a server in that mode, or a `\` was left alone on one that isn't, and either
+    // ended the literal.
+    // - A `'` is written as `''`, a quote in both modes (and 0x27 is never the second byte of a
+    //   multibyte character). A wildcard that also contains `\` is refused: its meaning would
+    //   depend on the mode.
+    // - A wildcard without `'` goes through perfect_mysql_escape_string_quote (libmysqlclient's
+    //   mysql_real_escape_string_quote, which unlike mysql_real_escape_string works under
+    //   NO_BACKSLASH_ESCAPES; libmariadb's mysql_real_escape_string). Its output has no `'`, so
+    //   with a wrong mode bit the worst case is a syntax error.
+    // - The multibyte guard above still applies first.
     private func listNames(_ show: String, like wild: String?) -> [String] {
         guard !listingWildcardIsUnsafe(wild) else {
             return []
@@ -233,15 +240,10 @@ public final class MySQL: @unchecked Sendable {
         var query = Array(show.utf8)
         if let wild {
             let bytes = Array(wild.utf8)
-            let quote = UInt8(ascii: "'"), backslash = UInt8(ascii: "\\")
+            let quote = UInt8(ascii: "'")
             query += Array(" LIKE '".utf8)
             if bytes.contains(quote) {
-                // The client library escapes for the NO_BACKSLASH_ESCAPES mode it last saw in the
-                // server's status, which a stored routine that changes sql_mode leaves stale, so a
-                // `'` is never left to it: `''` is a quote in a literal in either mode, and 0x27 is
-                // never part of a multibyte character. With a `\` as well, the right escaping
-                // depends on the mode, so such a wildcard is refused.
-                guard !bytes.contains(backslash) else {
+                guard !bytes.contains(UInt8(ascii: "\\")) else {
                     return []
                 }
                 for byte in bytes {
@@ -251,10 +253,10 @@ public final class MySQL: @unchecked Sendable {
                     }
                 }
             } else {
-                // No quote: escaping for the wrong mode can't end the literal.
                 let from = bytes.map { CChar(bitPattern: $0) } + [0]
-                var escaped = [CChar](repeating: 0, count: (from.count - 1) * 2 + 1)
-                let length = mysql_real_escape_string(self.ptr!, &escaped, from, UInt(from.count - 1))
+                var escaped = [CChar](repeating: 0, count: bytes.count * 2 + 1)
+                let length = perfect_mysql_escape_string_quote(self.ptr!, &escaped, from, UInt(bytes.count),
+                                                               CChar(bitPattern: quote))
                 guard length != UInt.max else {
                     return []
                 }

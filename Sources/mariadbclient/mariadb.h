@@ -42,4 +42,14 @@ static inline int perfect_mariadb_set_ssl_mode(MYSQL *mysql, unsigned int mode) 
     return 1;
   return mysql_options(mysql, MYSQL_OPT_SSL_VERIFY_SERVER_CERT, &verify);
 }
+
+// Escapes `from` for use inside a string literal quoted with `quote`, following the connection's
+// character set and the server's NO_BACKSLASH_ESCAPES mode. Same signature as Perfect-MySQL's shim;
+// libmariadb has no _quote variant, and its mysql_real_escape_string already doubles quotes under
+// NO_BACKSLASH_ESCAPES. Returns the escaped length, or (unsigned long)-1.
+static inline unsigned long perfect_mysql_escape_string_quote(MYSQL *mysql, char *to, const char *from,
+                                                              unsigned long length, char quote) {
+  (void)quote;
+  return mysql_real_escape_string(mysql, to, from, length);
+}
 #endif
