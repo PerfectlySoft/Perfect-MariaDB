@@ -164,14 +164,37 @@ public final class MySQLStmt: @unchecked Sendable {
     /// Reads and discards the current result set and any that follow (a CALL returns its rows
     /// and then a status result), so the connection can run the next statement instead of
     /// failing with "Commands out of sync".
-    func discardRemainingResults() {
+    ///
+    /// Returns the first error a later result reported (a CALL can fail after returning rows),
+    /// or nil. After an error the server sends no more results.
+    @discardableResult
+    func discardRemainingResults() -> (code: UInt32, message: String)? {
         mysql_stmt_free_result(ptr)
-        while nextResult() == 0 {
-            if fieldCount() > 0 {
-                mysql_stmt_store_result(ptr)
+        var firstError: (code: UInt32, message: String)?
+        while true {
+            let r = nextResult()
+            if r > 0 {
+                return firstError ?? currentError()
+            }
+            if r < 0 {
+                return firstError
+            }
+            if fieldCount() > 0 && mysql_stmt_store_result(ptr) != 0 && firstError == nil {
+                firstError = currentError()
             }
             mysql_stmt_free_result(ptr)
         }
+    }
+
+    /// The statement's error, or the connection's when the client library reported it there
+    /// (MariaDB Connector/C does for a failed mysql_stmt_store_result). Call right after the
+    /// failing call.
+    func currentError() -> (code: UInt32, message: String) {
+        let code = mysql_stmt_errno(ptr)
+        if code != 0 {
+            return (code, errorMessage())
+        }
+        return (connection.errorCode(), connection.errorMessage())
     }
 
     /// Fetches result metadata if there is none cached, or if the cached metadata's column count
@@ -335,13 +358,7 @@ public final class MySQLStmt: @unchecked Sendable {
 
         private func recordFailure() {
             failed = true
-            if stmt.errorCode() != 0 {
-                errorCode = stmt.errorCode()
-                errorMessage = stmt.errorMessage()
-            } else {
-                errorCode = stmt.connection.errorCode()
-                errorMessage = stmt.connection.errorMessage()
-            }
+            (errorCode, errorMessage) = stmt.currentError()
         }
 
         init(_ s: MySQLStmt) {

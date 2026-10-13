@@ -501,7 +501,11 @@ class MySQLStmtExeDelegate: SQLExeDelegate, @unchecked Sendable {
         // decoding error). Leave the connection ready for the next statement anyway.
         if results != nil {
             results = nil
-            statement.discardRemainingResults()
+            // Nothing can throw from here (Database.sql without a type calls hasNext() once), so
+            // an error from a later result is only logged.
+            if let later = statement.discardRemainingResults() {
+                CRUDLogging.log(.error, "Error executing statement. \(later.message)")
+            }
             statement.reset()
         }
     }
@@ -590,10 +594,14 @@ class MySQLStmtExeDelegate: SQLExeDelegate, @unchecked Sendable {
         let failure = results.flatMap { $0.failed ? $0.errorMessage : nil }
         results = nil
         // Read past any further result sets (a CALL ends with a status result), then reset.
-        statement.discardRemainingResults()
+        // A CALL can fail after its first result set; report that too.
+        let later = statement.discardRemainingResults()
         statement.reset()
         if let failure {
             throw MySQLCRUDError("Error reading results. \(failure)")
+        }
+        if let later {
+            throw MySQLCRUDError("Error executing statement. \(later.message)")
         }
         return false
     }

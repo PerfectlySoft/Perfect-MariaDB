@@ -160,6 +160,34 @@ struct StatementResultTests {
 		#expect(try db.sql("SELECT id, name FROM t WHERE id = 1", Pair.self) == [Pair(id: 1, name: "uno")])
 	}
 
+	// A CALL whose first result set is fine but whose later statement fails used to report
+	// success with the first set's rows: draining the remaining results dropped the error.
+	// Untyped `db.sql("CALL ...")` reads one row at most and can't see it (Perfect-CRUD calls
+	// hasNext() once), which the README documents.
+	@Test(.mariaLive)
+	func errorAfterACallsFirstResultSetThrows() throws {
+		let db = try freshDatabase()
+		defer { dropSchema() }
+		try db.sql("CREATE TABLE `u` (`id` INT PRIMARY KEY)")
+		try db.sql("INSERT INTO `u` VALUES (1)")
+		try db.sql("CREATE PROCEDURE `dup`() BEGIN SELECT 1 AS id, 'a' AS name; INSERT INTO u VALUES (1); END")
+		try db.sql("CREATE PROCEDURE `sub`() BEGIN SELECT 1 AS id, 'a' AS name; SELECT (SELECT 1 UNION SELECT 2) AS id, 'b' AS name; END")
+		try db.sql("CREATE PROCEDURE `sig`() BEGIN SELECT 1 AS id, 'a' AS name; SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'boom'; END")
+		for call in ["CALL dup()", "CALL sub()", "CALL sig()"] {
+			#expect(throws: MySQLCRUDError.self, "\(call)") { try db.sql(call, Pair.self) }
+			#expect(throws: MySQLCRUDError.self, "\(call)") { try db.execute(DynamicSQL(sql: call)) }
+			// The connection still works afterwards.
+			#expect(try db.sql("SELECT 2 AS id, 'ok' AS name", Pair.self) == [Pair(id: 2, name: "ok")])
+			// Untyped: Perfect-CRUD calls hasNext() once, so the error can't be reported (it's
+			// logged), but the connection must still be usable.
+			try db.sql(call)
+			#expect(try db.sql("SELECT 3 AS id, 'ok' AS name", Pair.self) == [Pair(id: 3, name: "ok")])
+		}
+		// A CALL that succeeds still doesn't throw.
+		try db.sql("CREATE PROCEDURE `fine`() BEGIN SELECT 1 AS id, 'a' AS name; SELECT 2 AS id, 'b' AS name; END")
+		#expect(try db.sql("CALL fine()", Pair.self) == [Pair(id: 1, name: "a")])
+	}
+
 	// MariaDB's INSERT ... RETURNING returns rows from an INSERT.
 	@Test(.mariaLive)
 	func insertReturningReturnsRows() throws {

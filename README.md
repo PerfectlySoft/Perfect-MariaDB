@@ -168,6 +168,11 @@ release notes for its changes.
   `time_zone` (run the connection in UTC, e.g. `SET time_zone = '+00:00'`, if you need those to line up). The zero
   date (`0000-00-00`) reads as nil for an optional `Date`; for a non-optional one it's an error, which Perfect-CRUD's
   `select()` currently skips the row on.
+- **CALL rows are readable:** `db.sql("CALL p(?)", bindings: ..., T.self)` and Dynamic queries return the procedure's
+  rows (in 3.x every column read as missing). Only the first result set is read; the others are discarded, so the
+  connection stays in sync. If a later statement in the procedure fails, the typed and Dynamic calls throw. An untyped
+  `db.sql("CALL p()")` can't report such an error, because Perfect-CRUD only starts the statement there; read the rows
+  with a type (or use `execute(DynamicSQL)`) when the procedure can fail after its first result set.
 - **`MySQLOpt` has a new case,** `MYSQL_OPT_SSL_MODE`, so an exhaustive `switch` over `MySQLOpt` needs a case for it.
 - **`connect()`** always passes `CLIENT_REMEMBER_OPTIONS`, so options survive a failed connection attempt.
 
