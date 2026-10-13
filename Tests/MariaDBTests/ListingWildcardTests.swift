@@ -129,4 +129,63 @@ struct ListingWildcardTests {
         #expect(big5.listTables(wildcard: "it's") == ["it's"])
         #expect(big5.listTables(wildcard: "it%") == ["it's"])
     }
+
+    // Under NO_BACKSLASH_ESCAPES quotes are doubled instead of backslash-escaped, and wildcards keep
+    // working; injection stays closed. (Perfect-MySQL's test, adapted.)
+    @Test(.mariaLive, arguments: ["utf8mb4", "big5"])
+    func wildcardsWorkUnderNoBackslashEscapes(charset: String) throws {
+        let setup = freshSchema()
+        defer { setup.close(); dropSchema() }
+        #expect(setup.query(statement: "CREATE TABLE `victim` (i INT)"), "\(setup.errorMessage())")
+        #expect(setup.query(statement: "CREATE TABLE `it's` (i INT)"), "\(setup.errorMessage())")
+        let mysql = connect(charset: charset, flag: clientMultiStatements)
+        defer { mysql.close() }
+        #expect(mysql.selectDatabase(named: schema))
+        #expect(mysql.query(statement: "SET SESSION sql_mode = CONCAT(@@sql_mode, ',NO_BACKSLASH_ESCAPES')"), "\(mysql.errorMessage())")
+        #expect(mysql.listTables(wildcard: "vic%") == ["victim"], "\(charset)")
+        #expect(mysql.listTables(wildcard: "it's") == ["it's"], "\(charset)")
+        #expect(mysql.listDatabases(wildcard: schema) == [schema], "\(charset)")
+        for payload in ["x'; DROP TABLE victim; -- ", "x\\'; DROP TABLE victim; -- ", "中'; DROP TABLE victim; -- "] {
+            #expect(mysql.listTables(wildcard: payload).isEmpty, "\(charset)")
+            while mysql.moreResults() { _ = mysql.nextResult() }
+            #expect(mysql.query(statement: "SELECT 1"), "\(charset): \(mysql.errorMessage())")
+            _ = mysql.storeResults()
+        }
+        #expect(setup.listTables(wildcard: "victim") == ["victim"])
+    }
+
+    // libmariadb (and libmysqlclient) choose between backslash-escaping and quote-doubling from the
+    // NO_BACKSLASH_ESCAPES bit in the server's last status. After a stored routine changes
+    // sql_mode, both servers leave that bit as the routine set it while the session's sql_mode is
+    // restored, so the client escaped for the wrong mode and a wildcard could end the literal:
+    // the DROP below ran. A `'` is now always doubled (valid in both modes), and a wildcard with
+    // both `'` and `\` is refused.
+    @Test(.mariaLive)
+    func wildcardsStaySafeWhenARoutineLeavesTheModeBitStale() throws {
+        let setup = freshSchema()
+        defer { setup.close(); dropSchema() }
+        #expect(setup.query(statement: "CREATE PROCEDURE clear_mode() SET SESSION sql_mode = ''"), "\(setup.errorMessage())")
+        #expect(setup.query(statement: "CREATE PROCEDURE set_nbe() SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'"), "\(setup.errorMessage())")
+        #expect(setup.query(statement: "CREATE TABLE `it's` (i INT)"), "\(setup.errorMessage())")
+        let scenarios: [(String, String, String)] = [
+            // session mode before, routine, payload
+            ("NO_BACKSLASH_ESCAPES", "clear_mode", "x'; DROP TABLE victim; -- "),
+            ("", "set_nbe", "x\\'; DROP TABLE victim; -- "),
+            ("", "set_nbe", "x'; DROP TABLE victim; -- "),
+        ]
+        for (mode, routine, payload) in scenarios {
+            #expect(setup.query(statement: "CREATE TABLE IF NOT EXISTS `victim` (id INT)"), "\(setup.errorMessage())")
+            let mysql = connect(flag: clientMultiStatements)
+            #expect(mysql.selectDatabase(named: schema))
+            #expect(mysql.query(statement: "SET SESSION sql_mode = '\(mode)'"), "\(mysql.errorMessage())")
+            #expect(mysql.query(statement: "CALL \(routine)()"), "\(mysql.errorMessage())")
+            while mysql.moreResults() { _ = mysql.storeResults(); if mysql.nextResult() != 0 { break } }
+            #expect(mysql.listTables(wildcard: payload).isEmpty, "\(routine) \(payload)")
+            #expect(mysql.listTables(wildcard: "it's") == ["it's"], "\(routine)")
+            while mysql.moreResults() { _ = mysql.nextResult() }
+            mysql.close()
+            #expect(setup.listTables(wildcard: "victim") == ["victim"], "\(routine) \(payload)")
+        }
+    }
 }
+
