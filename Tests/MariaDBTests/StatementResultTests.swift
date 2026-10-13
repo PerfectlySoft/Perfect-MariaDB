@@ -178,6 +178,25 @@ struct StatementResultTests {
 		}
 	}
 
+	// An [Int8] property read its blob with Int8($0), which traps on any byte >= 0x80, so a
+	// negative value crashed on the way back. The rows are written with SQL here: Perfect-CRUD
+	// 3.0.0 itself traps encoding a negative [Int8] (fixed in Perfect-CRUD 3.0.1).
+	@Test(.mariaLive)
+	func signedByteArraysRoundTrip() throws {
+		struct Signed: Codable, TableNameProvider {
+			static let tableName = "signed_bytes"
+			let id: Int
+			let bytes: [Int8]
+		}
+		let db = try freshDatabase()
+		defer { dropSchema() }
+		try db.create(Signed.self, policy: .dropTable)
+		let written = [Signed(id: 1, bytes: [-1, -128, 0, 127, 1]), Signed(id: 2, bytes: [])]
+		try db.sql("INSERT INTO signed_bytes (id, bytes) VALUES (1, X'FF80007F01'), (2, X'')")
+		let read = try db.table(Signed.self).order(by: \.id).select().map { $0 }
+		#expect(read.map(\.bytes) == written.map(\.bytes))
+	}
+
 	// A CALL has no result metadata until it runs, and it ends with an extra status result.
 	// The column maps were built before execute(), so every column read as missing (Codable
 	// threw, Dynamic rows were empty), and the leftover result had to be drained.
