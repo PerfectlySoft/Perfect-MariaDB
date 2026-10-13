@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import MariaDB
+import mariadbclient
 
 // MYSQL_OPT_SSL_MODE takes MySQL's SSL_MODE_* values; libmariadb has no such option, so
 // MySQL.setOption maps the modes onto MYSQL_OPT_SSL_ENFORCE / MYSQL_OPT_SSL_VERIFY_SERVER_CERT.
@@ -95,12 +96,25 @@ ioamVHL6w6te45I=
     }
 
     // Connector/C 3.4 deliberately skips verification on loopback connections without a CA.
+    // With Connector/C 3.4 against MariaDB 11.4+ and a password, it instead verifies the server's
+    // self-signed certificate through a fingerprint derived from the password (MDEV-31855), so
+    // there the verifying modes are expected to connect.
     @Test(.mariaLive, .enabled(if: !["127.0.0.1", "::1"].contains(host), "needs a non-loopback MARIA_TEST_HOST"))
     func verifyingModesRejectASelfSignedServerWithoutCA() {
+        let probe = connect(.preferred)
+        let version = probe.query(statement: "SELECT VERSION()") ? (probe.storeResults()?.next()?[0] ?? nil) : nil
+        probe.close()
+        let fingerprintVerified = mysql_get_client_version() >= 30400
+            && version?.contains("MariaDB") == true && !password.isEmpty
         for mode in [Mode.verifyCA, .verifyIdentity] {
             let mysql = connect(mode)
-            #expect(mysql.errorCode() != 0, "\(mode) accepted a self-signed certificate")
-            #expect(!mysql.ping())
+            if fingerprintVerified {
+                #expect(mysql.errorCode() == 0, "\(mode): \(mysql.errorMessage())")
+                #expect(cipher(mysql) != "", "\(mode) connected without TLS")
+            } else {
+                #expect(mysql.errorCode() != 0, "\(mode) accepted a self-signed certificate")
+                #expect(!mysql.ping())
+            }
         }
     }
 

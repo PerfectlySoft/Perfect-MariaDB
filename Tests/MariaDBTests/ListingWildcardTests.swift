@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import MariaDB
+import mariadbclient
 
 // MARK: - listTables(wildcard:) / listDatabases(wildcard:)
 //
@@ -55,7 +56,11 @@ struct ListingWildcardTests {
         // Under NO_BACKSLASH_ESCAPES a quote has to be doubled rather than backslashed.
         #expect(mysql.query(statement: "SET SESSION sql_mode = CONCAT(@@sql_mode, ',NO_BACKSLASH_ESCAPES')"), "\(mysql.errorMessage())")
         #expect(mysql.listTables(wildcard: "it's") == ["it's"])
-        #expect(mysql.listTables(wildcard: #"a\_b"#) == ["a_b"])
+        // MariaDB keeps `\` as the LIKE escape character in this mode; MySQL treats it as a
+        // literal character, so `a\_b` matches neither table there.
+        let isMariaDB = mysql.query(statement: "SELECT VERSION()")
+            && (mysql.storeResults()?.next()?[0] ?? nil)?.contains("MariaDB") == true
+        #expect(mysql.listTables(wildcard: #"a\_b"#) == (isMariaDB ? ["a_b"] : []))
         #expect(mysql.query(statement: "SET SESSION sql_mode = DEFAULT"), "\(mysql.errorMessage())")
 
         #expect(mysql.query(statement: "CREATE DATABASE `\(schema)'db`"), "\(mysql.errorMessage())")
@@ -65,15 +70,19 @@ struct ListingWildcardTests {
 
     // On main the DROP ran: "SHOW TABLES LIKE 'x'; DROP TABLE wild_victim; -- '". Under gbk the
     // escaping has to follow the connection's charset: 中 is E4 B8 AD in UTF-8, and AD followed
-    // by the backslash that escapes the quote is one gbk character.
-    @Test(.mariaLive, arguments: ["utf8mb4", "gbk", "big5"])
+    // by the backslash that escapes the quote is one gbk character. Under big5 on x86_64,
+    // libmariadb 3.3's mysql_real_escape_string turned E4 B8 AD 27 into E4 B8 AD 5C 27, so the
+    // DROP ran even with escaping; wildcards like that are now refused under the five charsets
+    // where 0x5C can be a trail byte.
+    @Test(.mariaLive, arguments: ["utf8mb4", "latin1", "gbk", "big5", "cp932", "sjis", "gb18030"])
     func wildcardCannotRunAnotherStatement(charset: String) throws {
         let setup = freshSchema()
         defer { setup.close(); dropSchema() }
         let listings: [(String, (MySQL, String) -> [String])] = [
             ("listTables", { $0.listTables(wildcard: $1) }),
             ("listDatabases", { $0.listDatabases(wildcard: $1) })]
-        for wildcard in ["x'; DROP TABLE wild_victim; -- ", "中'; DROP TABLE wild_victim; -- "] {
+        for wildcard in ["x'; DROP TABLE wild_victim; -- ", "中'; DROP TABLE wild_victim; -- ",
+                         "中\\'; DROP TABLE wild_victim; -- ", "ｱ'; DROP TABLE wild_victim; -- "] {
             for (name, list) in listings {
                 #expect(setup.query(statement: "CREATE TABLE IF NOT EXISTS `wild_victim` (id INT)"), "\(setup.errorMessage())")
                 let mysql = connect(charset: charset, flag: clientMultiStatements)
@@ -86,4 +95,142 @@ struct ListingWildcardTests {
             }
         }
     }
+
+    // The refusal applies only where it's needed: a byte >= 0x80 together with `'` or `\`, under
+    // big5, cp932, gbk, gb18030 or sjis.
+    @Test(.mariaLive)
+    func unsafeWildcardsAreRefusedOnlyUnderTrailByteCharsets() throws {
+        for charset in ["big5", "cp932", "gbk", "gb18030", "sjis"] {
+            let mysql = connect(charset: charset)
+            defer { mysql.close() }
+            // MariaDB 11.8 has no gb18030; the client then stays on its default (utf8mb4), where
+            // nothing needs refusing.
+            let actual = String(cString: mysql_character_set_name(mysql.ptr!))
+            #expect(mysql.listingWildcardIsUnsafe("中'") == (actual == charset), "\(charset), client charset \(actual)")
+            #expect(mysql.listingWildcardIsUnsafe("中\\") == (actual == charset), "\(charset), client charset \(actual)")
+            #expect(!mysql.listingWildcardIsUnsafe("中%"), "\(charset)")
+            #expect(!mysql.listingWildcardIsUnsafe("it's"), "\(charset)")
+            #expect(!mysql.listingWildcardIsUnsafe(#"a\_b"#), "\(charset)")
+            #expect(!mysql.listingWildcardIsUnsafe(nil), "\(charset)")
+        }
+        for charset in ["utf8mb4", "latin1"] {
+            let mysql = connect(charset: charset)
+            defer { mysql.close() }
+            #expect(!mysql.listingWildcardIsUnsafe("中'"), "\(charset)")
+            #expect(!mysql.listingWildcardIsUnsafe("中\\"), "\(charset)")
+        }
+        // Ordinary wildcards still work under such a charset.
+        let setup = freshSchema()
+        defer { setup.close(); dropSchema() }
+        #expect(setup.query(statement: "CREATE TABLE `it's` (id INT)"), "\(setup.errorMessage())")
+        let big5 = connect(charset: "big5")
+        defer { big5.close() }
+        #expect(big5.selectDatabase(named: schema))
+        #expect(big5.listTables(wildcard: "it's") == ["it's"])
+        #expect(big5.listTables(wildcard: "it%") == ["it's"])
+    }
+
+    // Under NO_BACKSLASH_ESCAPES quotes are doubled instead of backslash-escaped, and wildcards keep
+    // working; injection stays closed. (Perfect-MySQL's test, adapted.)
+    @Test(.mariaLive, arguments: ["utf8mb4", "big5"])
+    func wildcardsWorkUnderNoBackslashEscapes(charset: String) throws {
+        let setup = freshSchema()
+        defer { setup.close(); dropSchema() }
+        #expect(setup.query(statement: "CREATE TABLE `victim` (i INT)"), "\(setup.errorMessage())")
+        #expect(setup.query(statement: "CREATE TABLE `it's` (i INT)"), "\(setup.errorMessage())")
+        let mysql = connect(charset: charset, flag: clientMultiStatements)
+        defer { mysql.close() }
+        #expect(mysql.selectDatabase(named: schema))
+        #expect(mysql.query(statement: "SET SESSION sql_mode = CONCAT(@@sql_mode, ',NO_BACKSLASH_ESCAPES')"), "\(mysql.errorMessage())")
+        #expect(mysql.listTables(wildcard: "vic%") == ["victim"], "\(charset)")
+        #expect(mysql.listTables(wildcard: "it's") == ["it's"], "\(charset)")
+        #expect(mysql.listDatabases(wildcard: schema) == [schema], "\(charset)")
+        for payload in ["x'; DROP TABLE victim; -- ", "x\\'; DROP TABLE victim; -- ", "中'; DROP TABLE victim; -- "] {
+            #expect(mysql.listTables(wildcard: payload).isEmpty, "\(charset)")
+            while mysql.moreResults() { _ = mysql.nextResult() }
+            #expect(mysql.query(statement: "SELECT 1"), "\(charset): \(mysql.errorMessage())")
+            _ = mysql.storeResults()
+        }
+        #expect(setup.listTables(wildcard: "victim") == ["victim"])
+    }
+
+    // libmariadb (and libmysqlclient) choose between backslash-escaping and quote-doubling from the
+    // NO_BACKSLASH_ESCAPES bit in the server's last status. After a stored routine changes
+    // sql_mode, both servers leave that bit as the routine set it while the session's sql_mode is
+    // restored, so the client escaped for the wrong mode and a wildcard could end the literal:
+    // the DROP below ran. A `'` is now always doubled (valid in both modes), and a wildcard with
+    // both `'` and `\` is refused.
+    @Test(.mariaLive)
+    func wildcardsStaySafeWhenARoutineLeavesTheModeBitStale() throws {
+        let setup = freshSchema()
+        defer { setup.close(); dropSchema() }
+        #expect(setup.query(statement: "CREATE PROCEDURE clear_mode() SET SESSION sql_mode = ''"), "\(setup.errorMessage())")
+        #expect(setup.query(statement: "CREATE PROCEDURE set_nbe() SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'"), "\(setup.errorMessage())")
+        #expect(setup.query(statement: "CREATE TABLE `it's` (i INT)"), "\(setup.errorMessage())")
+        let scenarios: [(String, String, String)] = [
+            // session mode before, routine, payload
+            ("NO_BACKSLASH_ESCAPES", "clear_mode", "x'; DROP TABLE victim; -- "),
+            ("", "set_nbe", "x\\'; DROP TABLE victim; -- "),
+            ("", "set_nbe", "x'; DROP TABLE victim; -- "),
+        ]
+        for (mode, routine, payload) in scenarios {
+            #expect(setup.query(statement: "CREATE TABLE IF NOT EXISTS `victim` (id INT)"), "\(setup.errorMessage())")
+            let mysql = connect(flag: clientMultiStatements)
+            #expect(mysql.selectDatabase(named: schema))
+            #expect(mysql.query(statement: "SET SESSION sql_mode = '\(mode)'"), "\(mysql.errorMessage())")
+            #expect(mysql.query(statement: "CALL \(routine)()"), "\(mysql.errorMessage())")
+            while mysql.moreResults() { _ = mysql.storeResults(); if mysql.nextResult() != 0 { break } }
+            #expect(mysql.listTables(wildcard: payload).isEmpty, "\(routine) \(payload)")
+            #expect(mysql.listTables(wildcard: "it's") == ["it's"], "\(routine)")
+            while mysql.moreResults() { _ = mysql.nextResult() }
+            mysql.close()
+            #expect(setup.listTables(wildcard: "victim") == ["victim"], "\(routine) \(payload)")
+        }
+    }
+
+    /// Runs `sql` and reads every result (a CALL returns several).
+    static func run(_ mysql: MySQL, _ sql: String) throws {
+        try #require(mysql.query(statement: sql), "\(sql): \(mysql.errorMessage())")
+        _ = mysql.storeResults()
+        while mysql.moreResults() {
+            _ = mysql.nextResult()
+            _ = mysql.storeResults()
+        }
+    }
+
+    // Perfect-MySQL's test for the same fix (5c9c5fd), adapted: four stale-bit setups, each with
+    // `x'...`, `x\'...` and a trailing `\`; the connection must stay in sync, and vic% must
+    // still match.
+    @Test(.mariaLive, arguments: ["utf8mb4", "latin1", "big5"])
+    func aStaleNoBackslashEscapesBitCannotEndTheLiteral(charset: String) throws {
+        let setup = freshSchema()
+        defer { setup.close(); dropSchema() }
+        try Self.run(setup, "CREATE TABLE victim (i INT)")
+        try Self.run(setup, "CREATE TABLE `it's` (i INT)")
+        let mysql = connect(charset: charset, flag: clientMultiStatements)
+        defer { mysql.close() }
+        #expect(mysql.selectDatabase(named: schema))
+        try Self.run(mysql, "CREATE PROCEDURE clear_mode() SET SESSION sql_mode = ''")
+        try Self.run(mysql, "CREATE PROCEDURE set_nbe() SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'")
+        try Self.run(mysql, "CREATE FUNCTION nbe_fn() RETURNS INT DETERMINISTIC BEGIN SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'; RETURN 1; END")
+        let payloads = ["x'; DROP TABLE victim; -- ", "x\\'; DROP TABLE victim; -- ", "x\\"]
+        let setups: [[String]] = [
+            ["SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'", "CALL clear_mode()"],
+            ["SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'", "CALL clear_mode()", "DO 1"],
+            ["SET SESSION sql_mode = ''", "CALL set_nbe()"],
+            ["SET SESSION sql_mode = ''", "SELECT nbe_fn()", "DO 1"],
+        ]
+        for steps in setups {
+            for payload in payloads {
+                for sql in steps { try Self.run(mysql, sql) }
+                #expect(mysql.listTables(wildcard: payload).isEmpty, "\(charset) \(steps)")
+                #expect(mysql.query(statement: "SELECT 1"), "\(charset) \(steps): \(mysql.errorMessage())")
+                _ = mysql.storeResults()
+            }
+            for sql in steps { try Self.run(mysql, sql) }
+            #expect(mysql.listTables(wildcard: "vic%") == ["victim"], "\(charset) \(steps)")
+            #expect(mysql.listTables(wildcard: "it_s") == ["it's"], "\(charset) \(steps)")
+        }
+    }
 }
+

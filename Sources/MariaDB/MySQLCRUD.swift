@@ -38,7 +38,16 @@ class MySQLCRUDRowReader<K: CodingKey>: KeyedDecodingContainerProtocol, @uncheck
         }
     }
     func contains(_ key: Key) -> Bool { return nil != columns[key.stringValue] }
-    func decodeNil(forKey key: Key) throws -> Bool { return nil == column(key) }
+    func decodeNil(forKey key: Key) throws -> Bool {
+        guard let value = column(key) else { return true }
+        // The zero date ('0000-00-00', '0000-00-00 00:00:00') isn't a date. An optional
+        // property over a date column reads it as nil; a non-optional Date throws.
+        if let text = value as? String, text.hasPrefix("0000-00-00"),
+           let index = columns[key.stringValue], statement.fieldInfo(index: index)?.type == .date {
+            return true
+        }
+        return false
+    }
     func decode(_ type: Bool.Type, forKey key: Key) throws -> Bool {
         return ((column(key) as? Int8) ?? 0) != 0
     }
@@ -72,8 +81,30 @@ class MySQLCRUDRowReader<K: CodingKey>: KeyedDecodingContainerProtocol, @uncheck
     func decode(_ type: UInt16.Type, forKey key: Key) throws -> UInt16 { return (column(key) as? UInt16) ?? 0 }
     func decode(_ type: UInt32.Type, forKey key: Key) throws -> UInt32 { return (column(key) as? UInt32) ?? 0 }
     func decode(_ type: UInt64.Type, forKey key: Key) throws -> UInt64 { return (column(key) as? UInt64) ?? 0 }
-    func decode(_ type: Float.Type, forKey key: Key) throws -> Float { return (column(key) as? Float) ?? 0 }
-    func decode(_ type: Double.Type, forKey key: Key) throws -> Double { return (column(key) as? Double) ?? 0 }
+    func decode(_ type: Float.Type, forKey key: Key) throws -> Float {
+        switch column(key) {
+        case let f as Float: return f
+        case let d as Double: return Float(d)
+        case let text as String: // DECIMAL arrives as text
+            guard let f = Float(text) else {
+                throw MySQLCRUDError("Could not convert \(text) into a Float for key: \(key.stringValue)")
+            }
+            return f
+        default: return 0
+        }
+    }
+    func decode(_ type: Double.Type, forKey key: Key) throws -> Double {
+        switch column(key) {
+        case let d as Double: return d
+        case let f as Float: return Double(f)
+        case let text as String: // DECIMAL arrives as text
+            guard let d = Double(text) else {
+                throw MySQLCRUDError("Could not convert \(text) into a Double for key: \(key.stringValue)")
+            }
+            return d
+        default: return 0
+        }
+    }
     func decode(_ type: String.Type, forKey key: Key) throws -> String {
         return text(column(key)) ?? ""
     }
@@ -87,7 +118,7 @@ class MySQLCRUDRowReader<K: CodingKey>: KeyedDecodingContainerProtocol, @uncheck
             let ret: [UInt8] = (val as? [UInt8]) ?? []
             return ret as! T
         case .int8Array:
-            let ret: [Int8] = ((val as? [UInt8]) ?? []).map { Int8($0) }
+            let ret: [Int8] = ((val as? [UInt8]) ?? []).map { Int8(bitPattern: $0) }
             return ret as! T
         case .data:
             let bytes: [UInt8] = (val as? [UInt8]) ?? []
@@ -99,6 +130,9 @@ class MySQLCRUDRowReader<K: CodingKey>: KeyedDecodingContainerProtocol, @uncheck
             return uuid as! T
         case .date:
             guard let str = text(val), let date = Date(fromMysqlFormatted: str) else {
+                if let str = text(val), str.hasPrefix("0000-00-00") {
+                    throw CRUDDecoderError("Zero date \(str) for key \(key.stringValue) can't be a Date; use an optional property.")
+                }
                 throw CRUDDecoderError("Invalid Date string \(String(describing: val)).")
             }
             return date as! T
@@ -447,15 +481,86 @@ class MySQLStmtExeDelegate: SQLExeDelegate, @unchecked Sendable {
     let connection: MySQL
     let statement: MySQLStmt
     var results: MySQLStmt.Results?
-    let columnMap: MySQLColumnMap
+    /// Built after each execute(): a CALL has no result metadata until then.
+    private(set) var columnMap = MySQLColumnMap()
+    /// For the Dynamic API: each column's position and its name, lowercased, keeping only the
+    /// first of the columns whose names differ only by case (or not at all), such as `p.Name`
+    /// and `c.name` in a join. Perfect-CRUD 3.0.0's `DynamicRow.init` traps on a duplicate key.
+    private(set) var dynamicColumns: [(index: Int, key: String)] = []
+    /// Captured after executing, before the results are read and the statement reset.
+    var affectedRows = 0
+    var insertedID: Int64?
 
     init(connection c: MySQL, stat: MySQLStmt) {
         connection = c
         statement = stat
+    }
+
+    deinit {
+        // Callers can stop before the rows run out (Database.sql without a type, first(), a
+        // decoding error). Leave the connection ready for the next statement anyway.
+        if results != nil {
+            results = nil
+            // Nothing can throw from here (Database.sql without a type calls hasNext() once), so
+            // an error from a later result is only logged.
+            if let later = statement.discardRemainingResults() {
+                CRUDLogging.log(.error, "Error executing statement. \(later.message)")
+            }
+            statement.reset()
+        }
+    }
+
+    private func buildColumnMaps() {
+        // When several columns share a name (`a.id, b.id`), the first one wins. This used to
+        // depend on dictionary order.
         var m = MySQLColumnMap()
-        let inv = stat.fieldNames()
-        inv.forEach { (pos, name) in m[name] = pos }
+        var dynamic: [(index: Int, key: String)] = []
+        var seen = Set<String>()
+        for (index, name) in statement.fieldNames().sorted(by: { $0.key < $1.key }) {
+            if m[name] == nil {
+                m[name] = index
+            }
+            if seen.insert(name.lowercased()).inserted {
+                dynamic.append((index, name.lowercased()))
+            }
+        }
         columnMap = m
+        dynamicColumns = dynamic
+    }
+
+    func nextDynamicRow() throws -> DynamicRow? {
+        guard let row = results?.currentRow() else { return nil }
+        var values: [String: DynamicValue] = [:]
+        for (index, key) in dynamicColumns {
+            guard row.indices.contains(index) else {
+                throw MySQLCRUDError("Missing dynamic row value for column \(key).")
+            }
+            values[key] = try Self.dynamicValue(row[index], column: key)
+        }
+        return DynamicRow(values)
+    }
+
+    func affectedRowCount() -> Int { affectedRows }
+
+    func lastInsertedID() -> Int64? { insertedID }
+
+    static func dynamicValue(_ value: Any?, column: String) throws -> DynamicValue {
+        switch value {
+        case nil: return .null
+        case let v as Int64: return .int(v)
+        case let v as Int32: return .int(Int64(v))
+        case let v as Int16: return .int(Int64(v))
+        case let v as Int8: return .int(Int64(v))
+        case let v as UInt64: return .uint(v)
+        case let v as UInt32: return .uint(UInt64(v))
+        case let v as UInt16: return .uint(UInt64(v))
+        case let v as UInt8: return .uint(UInt64(v))
+        case let v as Double: return .double(v)
+        case let v as Float: return .double(Double(v))
+        case let v as String: return .string(v)
+        case let v as [UInt8]: return .bytes(v)
+        default: throw MySQLCRUDError("Unsupported value \(String(describing: value)) in column \(column)")
+        }
     }
 
     func bind(_ bindings: Bindings, skip: Int) throws {
@@ -470,11 +575,34 @@ class MySQLStmtExeDelegate: SQLExeDelegate, @unchecked Sendable {
             guard statement.execute() else {
                 throw MySQLCRUDError("Error executing statement. \(statement.errorMessage())")
             }
+            let returnsRows = statement.fieldCount() > 0
+            if !returnsRows {
+                affectedRows = Int(exactly: statement.affectedRows()) ?? 0
+                let id = statement.insertId()
+                insertedID = id == 0 ? nil : Int64(exactly: id)
+            }
             results = statement.results()
+            if returnsRows {
+                // For a statement that returns rows (SELECT, CALL, MariaDB's INSERT ... RETURNING)
+                // the count is the number of rows stored, and there's no insert ID to report.
+                affectedRows = Int(exactly: statement.numRows()) ?? 0
+                insertedID = nil
+                buildColumnMaps()
+            }
         }
         if results?.fetchRow() ?? false { return true }
-        statement.reset()
+        let failure = results.flatMap { $0.failed ? $0.errorMessage : nil }
         results = nil
+        // Read past any further result sets (a CALL ends with a status result), then reset.
+        // A CALL can fail after its first result set; report that too.
+        let later = statement.discardRemainingResults()
+        statement.reset()
+        if let failure {
+            throw MySQLCRUDError("Error reading results. \(failure)")
+        }
+        if let later {
+            throw MySQLCRUDError("Error executing statement. \(later.message)")
+        }
         return false
     }
 
@@ -491,7 +619,7 @@ class MySQLStmtExeDelegate: SQLExeDelegate, @unchecked Sendable {
         case .string(let s): statement.bindParam(s)
         case .blob(let b): statement.bindParam(b)
         case .bool(let b): statement.bindParam(b ? 1 : 0)
-        case .date(let d): statement.bindParam(d.mysqlFormatted())
+        case .date(let d): statement.bindParam(try d.mysqlFormatted())
         case .url(let u): statement.bindParam(u.absoluteString)
         case .uuid(let u): statement.bindParam(u.uuidString)
         case .null: statement.bindParam()
@@ -593,25 +721,136 @@ public struct MySQLDatabaseConfiguration: DatabaseConfigurationProtocol, @unchec
     }
 }
 
+// Perfect-CRUD writes dates as UTC wall-clock text, so they're read back as UTC too. Neither
+// direction depends on the process's time zone.
+//
+// Calendar arithmetic is proleptic Gregorian, as MySQL's is. Foundation's .gregorian calendar
+// switches to the Julian calendar before 1582-10-15, so it rejected 1582-10-05...14 and put
+// earlier dates 10 or more days away from the server's. These are Howard Hinnant's
+// days_from_civil / civil_from_days.
+
+/// Days since 1970-01-01 of a proleptic Gregorian date.
+func mysqlDaysFromCivil(year: Int, month: Int, day: Int) -> Int {
+    let y = month <= 2 ? year - 1 : year
+    let era = (y >= 0 ? y : y - 399) / 400
+    let yearOfEra = y - era * 400
+    let dayOfYear = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + day - 1
+    let dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear
+    return era * 146097 + dayOfEra - 719468
+}
+
+/// The proleptic Gregorian date `days` after 1970-01-01.
+func mysqlCivilFromDays(_ days: Int) -> (year: Int, month: Int, day: Int) {
+    let z = days + 719468
+    let era = (z >= 0 ? z : z - 146096) / 146097
+    let dayOfEra = z - era * 146097
+    let yearOfEra = (dayOfEra - dayOfEra / 1460 + dayOfEra / 36524 - dayOfEra / 146096) / 365
+    let dayOfYear = dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100)
+    let mp = (5 * dayOfYear + 2) / 153
+    let day = dayOfYear - (153 * mp + 2) / 5 + 1
+    let month = mp < 10 ? mp + 3 : mp - 9
+    return (yearOfEra + era * 400 + (month <= 2 ? 1 : 0), month, day)
+}
+
+private func mysqlDaysInMonth(year: Int, month: Int) -> Int {
+    switch month {
+    case 2:
+        return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 ? 29 : 28
+    case 4, 6, 9, 11:
+        return 30
+    default:
+        return 31
+    }
+}
+
+/// Seconds between 1970-01-01 and 2001-01-01, Date's reference date.
+private let mysqlReferenceOffset = 978_307_200
+
 extension Date {
-    func mysqlFormatted() -> String {
-        let dateFormatter = DateFormatter()
-        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
-        dateFormatter.timeZone = TimeZone(abbreviation: "GMT")
-        dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return dateFormatter.string(from: self)
+    /// `yyyy-MM-dd HH:mm:ss` in UTC, in whole seconds truncated toward the past (rounding could
+    /// carry 9999-12-31 23:59:59.9999995 into a year-10000 string the server rejects).
+    func mysqlFormatted() throws -> String {
+        // A non-finite Date has no text, and MySQL can't store years outside 0...9999; throwing
+        // (rather than clamping) keeps a wrong value out of the database.
+        let interval = timeIntervalSinceReferenceDate.rounded(.down)
+        guard interval.isFinite, abs(interval) < 1e15 else {
+            throw MySQLCRUDError("Can't store the Date \(timeIntervalSinceReferenceDate) (seconds since 2001) in MySQL.")
+        }
+        let seconds = Int(interval) + mysqlReferenceOffset
+        let days = seconds >= 0 ? seconds / 86400 : (seconds - 86399) / 86400
+        let secondOfDay = seconds - days * 86400
+        let (year, month, day) = mysqlCivilFromDays(days)
+        guard (0...9999).contains(year) else {
+            throw MySQLCRUDError("Can't store the Date \(timeIntervalSinceReferenceDate) (seconds since 2001) in MySQL: year \(year) is outside 0...9999.")
+        }
+        func pad(_ value: Int, _ width: Int) -> String {
+            let digits = String(value)
+            return String(repeating: "0", count: max(0, width - digits.count)) + digits
+        }
+        return "\(pad(year, 4))-\(pad(month, 2))-\(pad(day, 2)) "
+            + "\(pad(secondOfDay / 3600, 2)):\(pad(secondOfDay / 60 % 60, 2)):\(pad(secondOfDay % 60, 2))"
+    }
+    
+    /// Parses MySQL's DATETIME / TIMESTAMP / DATE text as UTC: `YYYY-MM-DD`, `YYYY-MM-DD HH:MM:SS`,
+    /// optionally with up to six fractional digits, in the proleptic Gregorian calendar (year 0
+    /// included: `Date.distantPast` is 0000-12-30). Returns nil for anything else, including the
+    /// zero date (month or day 0) and out-of-range parts such as February 30.
+    init?(fromMysqlFormatted string: String) {
+        let chars = Array(string.utf8)
+        func number(_ range: Range<Int>) -> Int? {
+            guard !range.isEmpty, range.upperBound <= chars.count else {
+                return nil
+            }
+            var value = 0
+            for i in range {
+                guard chars[i] >= 48, chars[i] <= 57 else {
+                    return nil
+                }
+                value = value * 10 + Int(chars[i] - 48)
+            }
+            return value
+        }
+        guard chars.count == 10 || (19...26).contains(chars.count),
+              chars[4] == UInt8(ascii: "-"), chars[7] == UInt8(ascii: "-"),
+              let year = number(0..<4), let month = number(5..<7), let day = number(8..<10),
+              (1...12).contains(month),
+              (1...mysqlDaysInMonth(year: year, month: month)).contains(day) else {
+            return nil
+        }
+        var secondOfDay = 0
+        var microseconds = 0
+        if chars.count >= 19 {
+            guard chars[10] == UInt8(ascii: " ") || chars[10] == UInt8(ascii: "T"),
+                  chars[13] == UInt8(ascii: ":"), chars[16] == UInt8(ascii: ":"),
+                  let hour = number(11..<13), let minute = number(14..<16), let second = number(17..<19),
+                  hour < 24, minute < 60, second < 60 else {
+                return nil
+            }
+            secondOfDay = hour * 3600 + minute * 60 + second
+            if chars.count > 19 {
+                guard chars[19] == UInt8(ascii: "."), let digits = number(20..<chars.count) else {
+                    return nil
+                }
+                microseconds = digits
+                for _ in chars.count..<26 {
+                    microseconds *= 10
+                }
+            }
+        }
+        let seconds = mysqlDaysFromCivil(year: year, month: month, day: day) * 86400 + secondOfDay
+        self.init(mysqlSeconds: TimeInterval(seconds - mysqlReferenceOffset), microseconds: microseconds)
     }
 
-    init?(fromMysqlFormatted string: String) {
-        let dateFormatter = DateFormatter()
-        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
-        dateFormatter.timeZone = TimeZone.current
-        dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        if let d = dateFormatter.date(from: string) {
-            self = d
-            return
+    /// A whole second plus a fraction kept inside that second. A Date is a Double count of seconds
+    /// since 2001, which near year 9999 can't hold six fractional digits: plain addition rounded
+    /// 9999-12-31 23:59:59.999999 up to year 10000. Such values become the largest Date still
+    /// inside the second.
+    init(mysqlSeconds seconds: TimeInterval, microseconds: Int) {
+        var interval = seconds + Double(microseconds) / 1_000_000
+        if interval >= seconds + 1 {
+            interval = (seconds + 1).nextDown
         }
-        return nil
+        self.init(timeIntervalSinceReferenceDate: interval)
     }
 }
 

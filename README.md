@@ -2,7 +2,7 @@
 
 <p align="center">
     <img src="https://img.shields.io/badge/Swift-6.2-orange.svg?style=flat" alt="Swift 6.2">
-    <img src="https://img.shields.io/badge/Platforms-macOS%2012%2B-lightgray.svg?style=flat" alt="Platforms macOS 12+">
+    <img src="https://img.shields.io/badge/Platforms-macOS%2012%2B%20%7C%20Linux-lightgray.svg?style=flat" alt="Platforms macOS 12+ | Linux">
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-lightgrey.svg?style=flat" alt="License Apache 2.0"></a>
 </p>
 
@@ -22,25 +22,37 @@ MariaDB target rather than not-yet-in-use or dead code.
 
 The pre-Swift-6 version of this package is preserved on the [`legacy`](../../tree/legacy) branch.
 
-## macOS Build Notes
+## Requirements
 
-`Package.swift` declares `platforms: [.macOS(.v12)]`.
+- Swift 6.2 or newer (`swift-tools-version: 6.2`, Swift 6 language mode).
+- macOS 12 or newer, or Linux. CI builds and tests on macOS (Xcode 26.0.1 and 26.6) and on Ubuntu 24.04
+  (Swift 6.2 and 6.4), with the Linux jobs running the live tests against MariaDB 11.8 and MySQL 8.4.
+- MariaDB Connector/C (libmariadb). It talks to both MariaDB and MySQL servers.
+- [Perfect-CRUD](https://github.com/PerfectlySoft/Perfect-CRUD) 3.0.1 or newer, which SwiftPM fetches for you.
 
-### To install the MariaDB connector:
+### macOS
 
 ```bash
 brew install mariadb-connector-c
 ```
 
-## Linux Build Notes
+Homebrew installs it keg-only (it conflicts with the `mariadb` formula), so it isn't linked into `/opt/homebrew`.
+SwiftPM in Swift 6.4 finds it through the package's Homebrew provider. With older toolchains (seen with Swift 6.2 in
+Xcode 26.3), point pkg-config at it, or the build fails with `'mysql.h' file not found`:
 
-Linux is not declared in the `platforms` array in `Package.swift` (only `.macOS(.v12)` is), so it is not an officially asserted/tested target. That said, the `mariadbclient` system-library target still declares an `.apt(["libmariadb-dev"])` provider, so a Linux build remains possible at the toolchain level if you ensure the library is installed:
+```bash
+export PKG_CONFIG_PATH="$(brew --prefix mariadb-connector-c)/lib/pkgconfig"
+```
+
+Having Homebrew's `mysql-client` installed as well is fine: the package links `libmariadb` only.
+
+### Linux
 
 ```bash
 sudo apt-get install pkg-config libmariadb-dev
 ```
 
-To test if pkg-config is working, try running the command:
+To check that pkg-config finds the library:
 
 ```bash
 pkg-config libmariadb --cflags --libs
@@ -48,12 +60,12 @@ pkg-config libmariadb --cflags --libs
 
 ## Building
 
-Add it to your `Package.swift`. There is no tagged release of the Swift 6 version yet, so depend on `main`:
+Add it to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/PerfectlySoft/Perfect-MariaDB.git", branch: "main"),
-    .package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", branch: "main"),
+    .package(url: "https://github.com/PerfectlySoft/Perfect-MariaDB.git", from: "4.0.0"),
+    .package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", from: "3.0.1"),
 ],
 targets: [
     .target(
@@ -67,9 +79,7 @@ targets: [
 ```
 
 The library product is named `PerfectMariaDB`, matching `PerfectMySQL` and `PerfectPostgreSQL`; the module is still
-imported as `MariaDB`. **Breaking change:** it used to be called `MariaDB`, so if you depended on `main` before this
-rename, change `.product(name: "MariaDB", ...)` (or a bare `"MariaDB"` dependency) to
-`.product(name: "PerfectMariaDB", package: "Perfect-MariaDB")`.
+imported as `MariaDB`.
 
 Import required libraries:
 ```swift
@@ -80,6 +90,23 @@ import PerfectCRUD
 Perfect-MariaDB implements the Perfect-CRUD protocol via `MySQLDatabaseConfiguration` (see `Sources/MariaDB/MySQLCRUD.swift`), letting Perfect-CRUD's declarative model/query API target a MariaDB/MySQL server. See [Perfect-CRUD](https://github.com/PerfectlySoft/Perfect-CRUD) for the CRUD API itself.
 
 Note: the source files retain their original `MySQLCRUD.swift`/`MySQLStmt.swift` naming from this package's shared lineage with [Perfect-MySQL](https://github.com/PerfectlySoft/Perfect-MySQL) — MariaDB is wire-compatible with the MySQL client protocol, and the two packages are separate, independently-buildable connectors in this ecosystem.
+
+### Dynamic queries
+
+Perfect-CRUD's Dynamic API (`select(_: DynamicQuery)`, `mutate(_:)`, `execute(_: DynamicSQL)`) works with this
+connector. Integer columns read as `.int` or `.uint` (unsigned columns), FLOAT/DOUBLE as `.double`, binary values as
+`.bytes`, and everything else, including DECIMAL and date/time columns, as `.string`. Column names are matched ignoring
+case; when a result has several columns whose names differ only by case, or not at all (`p.id, c.id` in a join), the
+row keeps the first, so alias the others. `affectedRows` and `insertedID` are reported; a statement that returns rows
+(SELECT, CALL, MariaDB's `INSERT ... RETURNING`) reports its row count and no insert ID. A prepared statement holds one
+statement, so `DynamicSQL` text with several statements fails as a whole, unless it starts with a statement that runs
+unprepared (such as `BEGIN`, or upper-case `CREATE`) on a connection opened with `CLIENT_MULTI_STATEMENTS`, in which
+case every statement runs and an error in any of them is thrown.
+
+Limits: an inserted ID above `Int64.max` (BIGINT UNSIGNED) is reported as nil; an UPDATE that changes nothing reports
+0 affected rows (the server counts changed rows, not matched ones); `TINYINT(1)` reads as `.int`, not `.bool`; `YEAR` reads as `.string`; statements that run
+unprepared (`BEGIN`, `SAVEPOINT`, `LOCK`, upper-case `CREATE`/`DROP`/`ALTER` and the like) report 0 affected rows; and
+only the first result set of a CALL that returns several is visible.
 
 ### TLS
 
@@ -102,9 +129,82 @@ guard mysql.setOption(.MYSQL_OPT_SSL_MODE, 5) else { fatalError("SSL mode not su
   `MYSQL_OPT_SSL_CA`, the CA on local (loopback or socket) connections.
 - **DISABLED** still uses TLS if any `MYSQL_OPT_SSL_*` file or cipher option is set.
 
-## Testing
+Connector/C 3.4 (Homebrew's current version) has stricter defaults when `MYSQL_OPT_SSL_MODE` isn't set. It refuses a
+server without TLS ("SSL is required, but the server does not support it"), even on 127.0.0.1; set DISABLED or
+PREFERRED to allow one. On connections that aren't local it also verifies the server certificate, so a remote server
+with a self-signed certificate is refused unless you pass its CA with `MYSQL_OPT_SSL_CA` or choose PREFERRED/REQUIRED,
+which don't verify. Against MariaDB 11.4 and newer, with a password, it can instead verify the server's self-signed
+certificate through a fingerprint derived from the password. Connector/C 3.3 (Ubuntu 24.04's `libmariadb-dev`) does none
+of this.
 
-A `MariaDBTests` target and a `docker-compose.yml` (spins up a local MariaDB container) are included for running the test suite against a real server.
+## Migrating from 3.x
+
+The previous release was 3.0.4 (2020). 4.0.0 is a Swift 6 rewrite on Perfect-CRUD 3; see Perfect-CRUD's own
+release notes for its changes.
+
+- **Toolchain and platforms:** Swift 6.2 or newer and macOS 12 or newer. On macOS with a toolchain older than Swift
+  6.4, set `PKG_CONFIG_PATH` as described above.
+- **Product name:** depend on `.product(name: "PerfectMariaDB", package: "Perfect-MariaDB")` instead of `"MariaDB"`.
+  `import MariaDB` is unchanged.
+- **Binary values are bytes:** through `MySQLStmt`, BINARY, VARBINARY, BIT and GEOMETRY values, binary expressions such
+  as `CAST(x AS BINARY)` or `UNHEX(...)`, and every string column after `SET NAMES binary` are `[UInt8]`, not `String`.
+  Use `String(decoding: bytes, as: UTF8.self)`, or `CAST(... AS CHAR)` in SQL. CRUD models with `String`, `UUID`,
+  `Date` or `URL` properties over such columns still decode.
+- **Text isn't truncated:** values with invalid UTF-8 used to stop at the first bad byte; they now come back in full,
+  with U+FFFD in place of each invalid sequence. `MySQL.Results` gains `nextBytes()`, `forEachRowBytes(callback:)`
+  and `fieldIsBinary(at:)` for exact bytes.
+- **Statements the server can't prepare run directly,** so Perfect-CRUD's nested transactions (`SAVEPOINT`) and
+  `LOCK`/`UNLOCK TABLES` work against MySQL servers. A statement sent this way that returns rows throws.
+- **`.reconcileTable`** no longer drops and re-adds columns whose names have uppercase letters (it lost their data),
+  adds the FOREIGN KEY constraint of a `@ForeignKey` column it adds (the ALTER fails if existing rows violate it), and
+  drops a removed `@ForeignKey` column's constraint with the column.
+- **`create()`** creates a table before the sub-tables that reference it, and `.dropTable` drops them in reverse.
+- **Errors while reading rows throw:** an error the server reports partway through a result (for example 1242, a
+  subquery returning more than one row) used to crash the process inside libmariadb. Perfect-CRUD queries now throw
+  `MySQLCRUDError`, and `MySQLStmt.Results` has new `failed`, `errorCode` and `errorMessage` properties (its `next()`
+  returns nil and `forEachRow` returns false after a failure).
+- **DECIMAL decodes into `Double` and `Float`:** such properties over a DECIMAL column used to read 0.0; they now read
+  the value, and text that doesn't parse throws.
+- **Dates are read as UTC:** Perfect-CRUD has always written `Date` values as UTC text, but 3.x parsed them in the
+  process's local time zone, so outside UTC they came back shifted by the UTC offset, and a row whose UTC time fell in
+  a local daylight-saving gap couldn't be decoded. Dates are now parsed as UTC, and `DATETIME(6)` fractions and `DATE`
+  values are read too. Rows written through Perfect-CRUD on or after 1582-10-15 read back correctly with no migration.
+  What does shift: apps that compensated for the old offset by hand; local-time values written outside Perfect-CRUD,
+  such as `NOW()` on a server whose time zone isn't UTC, or `TIMESTAMP` columns read in a non-UTC session `time_zone`
+  (run the connection in UTC, e.g. `SET time_zone = '+00:00'`, if you need those to line up); and dates before
+  1582-10-15 that 3.x wrote. Dates now use the proleptic Gregorian calendar, as the server does, while 3.x used
+  Foundation's Julian-before-1582 calendar for both writing and reading, so those older values (including
+  `Date.distantPast`, which 3.x stored as `0001-01-01`) read back 2 or more days different. Year 0 is accepted, so
+  `Date.distantPast` (`0000-12-30`) round-trips. Fractional seconds are read but not written (whole seconds,
+  truncated), and `9999-12-31 23:59:59.999999` no longer turns into year 10000. A `Date` the server can't store
+  (non-finite, or outside years 0–9999) now throws when bound instead of crashing: from `insert`, `update`, `count()`
+  and `sql`. In a `select()` whose `where` compares against such a `Date`, Perfect-CRUD catches the error, logs it and
+  returns no rows. The zero date (`0000-00-00`) reads
+  as nil for an optional `Date`; for a non-optional one it's a decoding error. Note that Perfect-CRUD's `select()`
+  stops at a row it can't decode and silently drops it and every later row, so any such error loses the rest of the
+  result.
+- **CALL rows are readable:** `db.sql("CALL p(?)", bindings: ..., T.self)` and Dynamic queries return the procedure's
+  rows (in 3.x every column read as missing). Only the first result set is read; the others are discarded, so the
+  connection stays in sync. If a later statement in the procedure fails, the typed and Dynamic calls throw. An untyped
+  `db.sql("CALL p()")` can't report such an error, because Perfect-CRUD only starts the statement there; read the rows
+  with a type (or use `execute(DynamicSQL)`) when the procedure can fail after its first result set.
+- **`MySQLOpt` has a new case,** `MYSQL_OPT_SSL_MODE`, so an exhaustive `switch` over `MySQLOpt` needs a case for it.
+- **`listTables` / `listDatabases` wildcards** can't end the string literal any more. In 3.x libmariadb pasted the
+  wildcard into `SHOW ... LIKE '...'` unescaped, so with `CLIENT_MULTI_STATEMENTS` the rest of it ran as SQL. Now a
+  `'` in the wildcard is doubled (which works whatever the server's `NO_BACKSLASH_ESCAPES` mode), the rest is escaped
+  by the client library, and some wildcards are refused (the result is `[]`): one with both `'` and `\`, and, under
+  big5, cp932, gbk, gb18030 or sjis, one with a non-ASCII byte and a `'` or `\`. Wildcards keep working under
+  `NO_BACKSLASH_ESCAPES`. The charset checked is the one set with `MYSQL_SET_CHARSET_NAME`.
+- **Statements can be reused safely:** a `MySQLStmt.Results` that's replaced by a newer one (`r = stmt.results()`), or
+  outlives `nextResult()` or a re-prepare, no longer disturbs the statement's current result, and re-executing a
+  prepared `CALL` no longer reads freed metadata. `execute()` now returns false (error 2031, `CR_PARAMS_NOT_BOUND`)
+  unless every parameter has been bound since the last `reset()`; re-executing with the old binds read freed memory.
+  Binding more values than the statement has parameters, which wrote past the bind array and crashed (also through
+  `db.sql(_:bindings:)`), is refused: `bindParam` sets `errorCode()` to 2034 (`CR_INVALID_PARAMETER_NO`) and doesn't
+  store the value, and `execute()` returns false with 2034 until `reset()`.
+  Blob parameters (`[UInt8]`, `[Int8]`, `bindParam(_:length:)`) and the parameter array no longer leak.
+- **`[Int8]` properties** read negative bytes instead of trapping (and Perfect-CRUD 3.0.1, now the minimum, writes them).
+- **`connect()`** always passes `CLIENT_REMEMBER_OPTIONS`, so options survive a failed connection attempt.
 
 ## Further Information
 For background on the broader Perfect framework, see [perfect.org](http://perfect.org) and [PerfectlySoft/Perfect](https://github.com/PerfectlySoft/Perfect).
@@ -116,8 +216,9 @@ The tests that need a server drop and recreate databases, so they are skipped (a
 otherwise fall back to 3306, which may be a real server. They connect to `127.0.0.1` as `root` with password `123` by
 default; override with `MARIA_TEST_HOST`, `MARIA_TEST_USER` and `MARIA_TEST_PASSWORD`. `MARIA_TEST_HOST=localhost` is
 refused, and so is an empty host, because the client then uses the Unix socket and ignores the port. The foreign-key
-tests also need `MARIA_FK_LIVE_TESTS=1`, and their password defaults to empty rather than `123`. For example, with a
-throwaway MariaDB container on port 3308:
+tests also need `MARIA_FK_LIVE_TESTS=1`, and their password defaults to empty rather than `123`. Two TLS tests need
+more: one a non-loopback `MARIA_TEST_HOST`, the other a server without TLS named by `MARIA_TEST_NOTLS_PORT` (and
+`MARIA_TEST_NOTLS_HOST`). For example, with the throwaway MariaDB container from `docker-compose.yml` on port 3308:
 
 ```sh
 MARIA_TESTS=1 MARIA_TEST_PORT=3308 swift test
