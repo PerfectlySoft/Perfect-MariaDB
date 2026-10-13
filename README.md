@@ -159,6 +159,12 @@ release notes for its changes.
   adds the FOREIGN KEY constraint of a `@ForeignKey` column it adds (the ALTER fails if existing rows violate it), and
   drops a removed `@ForeignKey` column's constraint with the column.
 - **`create()`** creates a table before the sub-tables that reference it, and `.dropTable` drops them in reverse.
+- **Errors while reading rows throw:** an error the server reports partway through a result (for example 1242, a
+  subquery returning more than one row) used to crash the process inside libmariadb. Perfect-CRUD queries now throw
+  `MySQLCRUDError`, and `MySQLStmt.Results` has new `failed`, `errorCode` and `errorMessage` properties (its `next()`
+  returns nil and `forEachRow` returns false after a failure).
+- **DECIMAL decodes into `Double` and `Float`:** such properties over a DECIMAL column used to read 0.0; they now read
+  the value, and text that doesn't parse throws.
 - **Dates are read as UTC:** Perfect-CRUD has always written `Date` values as UTC text, but 3.x parsed them in the
   process's local time zone, so outside UTC they came back shifted by the UTC offset, and a row whose UTC time fell in
   a local daylight-saving gap was silently dropped. Dates are now parsed as UTC, and `DATETIME(6)` fractions and `DATE`
@@ -167,13 +173,18 @@ release notes for its changes.
   Perfect-CRUD, such as `NOW()` on a server whose time zone isn't UTC, or `TIMESTAMP` columns read in a non-UTC session
   `time_zone` (run the connection in UTC, e.g. `SET time_zone = '+00:00'`, if you need those to line up). The zero
   date (`0000-00-00`) reads as nil for an optional `Date`; for a non-optional one it's an error, which Perfect-CRUD's
-  `select()` currently skips the row on.
+  `select()` currently skips the row on. Dates use the proleptic Gregorian calendar, as the server does, so
+  1582-10-05...14 parse and older dates are no longer 10 or more days off; fractions stay inside their second, and
+  writing truncates to whole seconds (so `9999-12-31 23:59:59.999999` no longer becomes year 10000).
 - **CALL rows are readable:** `db.sql("CALL p(?)", bindings: ..., T.self)` and Dynamic queries return the procedure's
   rows (in 3.x every column read as missing). Only the first result set is read; the others are discarded, so the
   connection stays in sync. If a later statement in the procedure fails, the typed and Dynamic calls throw. An untyped
   `db.sql("CALL p()")` can't report such an error, because Perfect-CRUD only starts the statement there; read the rows
   with a type (or use `execute(DynamicSQL)`) when the procedure can fail after its first result set.
 - **`MySQLOpt` has a new case,** `MYSQL_OPT_SSL_MODE`, so an exhaustive `switch` over `MySQLOpt` needs a case for it.
+- **`listTables` / `listDatabases`** escape their wildcard, and under big5, cp932, gbk, gb18030 or sjis refuse (return
+  `[]` for) a wildcard with a non-ASCII byte and a `'` or `\`, which escaping can't make safe there.
+- **`[Int8]` properties** read negative bytes instead of trapping (writing them needs Perfect-CRUD 3.0.1).
 - **`connect()`** always passes `CLIENT_REMEMBER_OPTIONS`, so options survive a failed connection attempt.
 
 ## Further Information
