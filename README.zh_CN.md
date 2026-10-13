@@ -79,7 +79,7 @@ $ pkg-config libmariadb --cflags --libs
 
 ```swift
 .package(url: "https://github.com/PerfectlySoft/Perfect-MariaDB.git", from: "4.0.0"),
-.package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", from: "3.0.0"),
+.package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", from: "3.0.1"),
 ...
 dependencies: [
     .product(name: "PerfectMariaDB", package: "Perfect-MariaDB"),

@@ -28,7 +28,7 @@ The pre-Swift-6 version of this package is preserved on the [`legacy`](../../tre
 - macOS 12 or newer, or Linux. CI builds and tests on macOS (Xcode 26.0.1 and 26.6) and on Ubuntu 24.04
   (Swift 6.2 and 6.4), with the Linux jobs running the live tests against MariaDB 11.8 and MySQL 8.4.
 - MariaDB Connector/C (libmariadb). It talks to both MariaDB and MySQL servers.
-- [Perfect-CRUD](https://github.com/PerfectlySoft/Perfect-CRUD) 3.0.0 or newer, which SwiftPM fetches for you.
+- [Perfect-CRUD](https://github.com/PerfectlySoft/Perfect-CRUD) 3.0.1 or newer, which SwiftPM fetches for you.
 
 ### macOS
 
@@ -65,7 +65,7 @@ Add it to your `Package.swift`:
 ```swift
 dependencies: [
     .package(url: "https://github.com/PerfectlySoft/Perfect-MariaDB.git", from: "4.0.0"),
-    .package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", from: "3.0.0"),
+    .package(url: "https://github.com/PerfectlySoft/Perfect-CRUD.git", from: "3.0.1"),
 ],
 targets: [
     .target(
@@ -198,7 +198,7 @@ release notes for its changes.
   prepared `CALL` no longer reads freed metadata. `execute()` now returns false (error 2031, `CR_PARAMS_NOT_BOUND`)
   unless every parameter has been bound since the last `reset()`; re-executing with the old binds read freed memory.
   Blob parameters (`[UInt8]`, `[Int8]`, `bindParam(_:length:)`) and the parameter array no longer leak.
-- **`[Int8]` properties** read negative bytes instead of trapping (writing them needs Perfect-CRUD 3.0.1).
+- **`[Int8]` properties** read negative bytes instead of trapping (and Perfect-CRUD 3.0.1, now the minimum, writes them).
 - **`connect()`** always passes `CLIENT_REMEMBER_OPTIONS`, so options survive a failed connection attempt.
 
 ## Further Information

@@ -179,8 +179,8 @@ struct StatementResultTests {
 	}
 
 	// An [Int8] property read its blob with Int8($0), which traps on any byte >= 0x80, so a
-	// negative value crashed on the way back. The rows are written with SQL here: Perfect-CRUD
-	// 3.0.0 itself traps encoding a negative [Int8] (fixed in Perfect-CRUD 3.0.1).
+	// negative value crashed on the way back. The first rows are written with SQL, the last through
+	// Perfect-CRUD (its 3.0.0 encoder trapped on a negative [Int8]; 3.0.1 and later don't).
 	@Test(.mariaLive)
 	func signedByteArraysRoundTrip() throws {
 		struct Signed: Codable, TableNameProvider {
@@ -195,6 +195,9 @@ struct StatementResultTests {
 		try db.sql("INSERT INTO signed_bytes (id, bytes) VALUES (1, X'FF80007F01'), (2, X'')")
 		let read = try db.table(Signed.self).order(by: \.id).select().map { $0 }
 		#expect(read.map(\.bytes) == written.map(\.bytes))
+		let all = Signed(id: 3, bytes: (Int8.min...Int8.max).map { $0 })
+		try db.table(Signed.self).insert(all)
+		#expect(try db.table(Signed.self).where(\Signed.id == 3).first()?.bytes == all.bytes)
 	}
 
 	// Replacing a Results with a newer one releases the older one after the newer has bound.
